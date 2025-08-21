@@ -1,96 +1,53 @@
-# Call Insights Desk — OpenAI-only Prototype (Streamlit)
-# -----------------------------------------------------
-# What this app does
-# • Upload multiple call recordings (mp3/wav/m4a/ogg/aac/flac)
-# • Transcribe with OpenAI Whisper (whisper-1) — segments include timestamps
-# • Index segments (utterance-like) with embeddings for retrieval
-# • Ask multi-part questions with presets (RCA, Destinations/Products, Refund Commitments,
-#   Customer Requirements, Voice of Customer)
-# • Get structured JSON answers + evidence (file, timestamp, quote)
-# • Export evidence CSV
-#
-# How to run locally:
-#   1) pip install streamlit openai numpy pandas tqdm
-#   2) streamlit run streamlit_openai_call_insights_app.py
-#
-# How to deploy on Streamlit Cloud (free):
-#   • Put this file in a GitHub repo, then deploy at https://share.streamlit.io
-#   • Set OPENAI_API_KEY in the app sidebar at runtime (or via Streamlit secrets)
+# Call Insights Desk — Neutral UI + Custom Analyst
+# ------------------------------------------------
+# Users can:
+# • Upload multiple audio files
+# • Transcribe (AI) to segments with timestamps
+# • Select specific files (search, select all/clear)
+# • Ask Insights: RCA, Destinations/Products, Refund Commitments, Requirements, VoC
+# • Ask free-form "Custom Analyst" questions over selected calls (e.g., 5-call summary)
+# • Get friendly sections + Evidence (file, timestamp, quote) and download CSV
 
-import io
 import os
 import json
-import time
-import math
-import queue
-import base64
 import numpy as np
 import pandas as pd
 import streamlit as st
-from tqdm import tqdm
-from typing import List, Dict, Any
-
+from typing import List, Dict, Any, Optional
 from openai import OpenAI
 
-# ----------------------------
-# App Config & Session State
-# ----------------------------
+# =========================
+# Hidden config (no UI)
+# =========================
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]  # set in Streamlit Secrets
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+oai = OpenAI(api_key=OPENAI_API_KEY)
+
+# Internal defaults (edit here only)
+REASONING_MODEL = "gpt-4o-mini"
+EMBED_MODEL     = "text-embedding-3-large"
+TOP_K_DEFAULT   = 8           # total segments per insight (general)
+TOP_K_PER_FILE  = 6           # segments per file (Custom Analyst mode)
+
+# =========================
+# Page config & state
+# =========================
 st.set_page_config(page_title="Call Insights Desk", layout="wide")
 
 if "records" not in st.session_state:
-    # records: list of { filename, audio_bytes, segments:[{start,end,text}], embed_vectors: np.ndarray }
+    # records: [{ filename, audio_bytes, segments:[{start,end,text}], embed_vectors: np.ndarray }]
     st.session_state["records"] = []
-if "openai_model" not in st.session_state:
-    st.session_state["openai_model"] = "gpt-4o-mini"
-if "embed_model" not in st.session_state:
-    st.session_state["embed_model"] = "text-embedding-3-large"
-if "top_k" not in st.session_state:
-    st.session_state["top_k"] = 8
+if "selected_files" not in st.session_state:
+    st.session_state["selected_files"] = set()
 
-# ----------------------------
-# Sidebar: API Key & Settings
-# ----------------------------
-st.sidebar.title("🔐 Keys & Settings")
-OPENAI_API_KEY = st.sidebar.text_input("OpenAI API Key", type="password")
-if OPENAI_API_KEY:
-    os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
-    oai = OpenAI(api_key=OPENAI_API_KEY)
-else:
-    oai = None
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Analysis Model")
-st.session_state["openai_model"] = st.sidebar.selectbox(
-    "Reasoning model",
-    ["gpt-4o-mini", "gpt-4o"],
-    index=0,
-)
-
-st.sidebar.subheader("Embedding Model")
-st.session_state["embed_model"] = st.sidebar.selectbox(
-    "Embeddings",
-    ["text-embedding-3-large", "text-embedding-3-small"],
-    index=0,
-)
-
-st.sidebar.subheader("Retrieval")
-st.session_state["top_k"] = st.sidebar.slider("Top-K segments per insight", 3, 20, st.session_state["top_k"]) 
-
-st.sidebar.markdown("---")
-if st.sidebar.button("🧹 Clear all data"):
-    st.session_state["records"] = []
-    st.success("Cleared transcripts & index from memory.")
-
-# ----------------------------
+# =========================
 # Helpers
-# ----------------------------
-
-def embed_texts(oai_client: OpenAI, texts: List[str], model: str) -> np.ndarray:
+# =========================
+def embed_texts(texts: List[str]) -> np.ndarray:
     if not texts:
         return np.zeros((0, 3072), dtype=np.float32)
-    resp = oai_client.embeddings.create(model=model, input=texts)
-    vecs = np.array([d.embedding for d in resp.data], dtype=np.float32)
-    return vecs
+    resp = oai.embeddings.create(model=EMBED_MODEL, input=texts)
+    return np.array([d.embedding for d in resp.data], dtype=np.float32)
 
 def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     if a.size == 0 or b.size == 0:
@@ -99,73 +56,38 @@ def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     bn = b / (np.linalg.norm(b) + 1e-9)
     return float(np.dot(an, bn))
 
-def transcribe_file(oai_client: OpenAI, filename: str, raw_bytes: bytes) -> Dict[str, Any]:
-    """Transcribe using OpenAI Whisper (verbose_json for segments)."""
-    # Save to temp for API (file-like needed)
+def transcribe_file(filename: str, raw_bytes: bytes) -> Dict[str, Any]:
+    """Transcribe using AI with segments & timestamps."""
     tmp_path = os.path.join("/tmp", filename)
     with open(tmp_path, "wb") as f:
         f.write(raw_bytes)
     with open(tmp_path, "rb") as f:
-        r = oai_client.audio.transcriptions.create(
+        r = oai.audio.transcriptions.create(
             model="whisper-1",
             file=f,
             response_format="verbose_json"
         )
-    # r.model_dump() -> dict-like
     data = r.model_dump()
     segments = []
     for seg in data.get("segments", []) or []:
         segments.append({
             "start": float(seg.get("start", 0.0)),
-            "end": float(seg.get("end", 0.0)),
-            "text": seg.get("text", "").strip()
+            "end":   float(seg.get("end",   0.0)),
+            "text": (seg.get("text") or "").strip()
         })
-    full_text = data.get("text", "").strip()
+    full_text = (data.get("text") or "").strip()
     return {"text": full_text, "segments": segments}
 
+# Insight presets and schemas
 PRESET_HINTS = {
     "RCA": "Root Cause Analysis focusing on what went wrong, contributing factors, and process gaps.",
-    "Destinations/Products": "Extract destinations and product/service mentions; normalize names (DXB->Dubai).",
+    "Destinations/Products": "Extract destinations and product/service mentions; normalize names (DXB->Dubai, KSA->Saudi Arabia).",
     "Refund Commitments": "Detect binding refund commitments made by the agent (not the customer).",
-    "Requirements": "Identify explicit and implicit customer requirements and urgency.",
-    "VoC": "Voice of Customer: themes with counts and representative quotes with sentiment."
+    "Requirements": "Identify explicit and implicit customer requirements and their urgency.",
+    "VoC": "Voice of Customer: themes with counts and representative quotes with sentiment.",
+    "Custom Analyst": "Answer the user's free-form question across ONLY the selected calls; return a cross-call summary with timeline and actions."
 }
-
-INSIGHTS = list(PRESET_HINTS.keys())
-
-def retrieve_segments(oai_client: OpenAI, query: str, hint: str, top_k: int) -> List[Dict[str, Any]]:
-    """Return top-k segment dicts across all files for a specific subtask."""
-    # Build a query embedding
-    q = f"{query}\nTask: {hint}"
-    q_vec = embed_texts(oai_client, [q], st.session_state["embed_model"])[0]
-
-    # Score all segments
-    scored = []
-    for rec in st.session_state["records"]:
-        segs = rec.get("segments", [])
-        vecs = rec.get("embed_vectors", np.zeros((0, 3072), dtype=np.float32))
-        for i, seg in enumerate(segs):
-            sim = cosine_sim(q_vec, vecs[i]) if i < len(vecs) else 0.0
-            scored.append((sim, rec["filename"], seg))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:top_k]
-    out = []
-    for sim, fname, seg in top:
-        out.append({
-            "filename": fname,
-            "start": seg["start"],
-            "end": seg["end"],
-            "text": seg["text"],
-            "score": float(sim)
-        })
-    return out
-
-SYSTEM_PROMPT = (
-    "You analyze customer service call transcripts. If any content is not English, first translate it in your reasoning and present outputs in English. "
-    "Use precise, professional language. Base claims only on provided context and cite FILE names with timestamps in parentheses. "
-    "Return ONLY valid JSON as instructed for each task."
-)
+INSIGHTS = ["RCA", "Destinations/Products", "Refund Commitments", "Requirements", "VoC", "Custom Analyst"]
 
 SCHEMAS = {
     "RCA": {
@@ -177,13 +99,15 @@ SCHEMAS = {
     },
     "Destinations/Products": {
         "instruction": (
-            "Extract destinations/products with normalization. Return: {items:[{type:'destination'|'product', value, synonyms[], evidence:[{file,start_s,end_s,quote}]}]}."
+            "Extract destinations/products with normalization. Return: "
+            "{items:[{type:'destination'|'product', value, synonyms[], evidence:[{file,start_s,end_s,quote}]}]}."
         ),
         "keys": ["items"],
     },
     "Refund Commitments": {
         "instruction": (
-            "Determine if an AGENT made a binding refund commitment (not customer demand). Return: {answer:'YES'|'NO', commitments:[{type:'full'|'partial'|'conditional', file, start_s, end_s, quote, confidence:0-1}], notes}."
+            "Determine if an AGENT made a binding refund commitment (not customer demand). "
+            "Return: {answer:'YES'|'NO', commitments:[{type:'full'|'partial'|'conditional', file, start_s, end_s, quote, confidence:0-1}], notes}."
         ),
         "keys": ["answer", "commitments", "notes"],
     },
@@ -199,30 +123,44 @@ SCHEMAS = {
         ),
         "keys": ["themes", "summary"],
     },
+    "Custom Analyst": {
+        "instruction": (
+            "Be a customer-service analyst across ONLY the selected calls provided in context. "
+            "Return JSON: {executive_summary, per_call:[{file, bullets[]}], "
+            "timeline:[{when, file, start_s, end_s, event}], action_items[], "
+            "evidence:[{file,start_s,end_s,quote}]}."
+        ),
+        "keys": ["executive_summary", "per_call", "timeline", "action_items", "evidence"],
+    },
 }
 
+SYSTEM_PROMPT = (
+    "You analyze customer service call transcripts. "
+    "If any content is not English, translate internally and present outputs in English. "
+    "Be precise and evidence-based; cite FILE names with timestamps in parentheses in quotes. "
+    "Return ONLY valid JSON for the requested schema."
+)
+
 def format_context_block(segments: List[Dict[str, Any]], max_chars: int = 9000) -> str:
-    """Render a context string from top segments, trimmed to avoid context blow-up."""
-    lines = []
-    total = 0
+    lines, total = [], 0
     for s in segments:
         line = f"FILE: {s['filename']} [{s['start']:.1f}-{s['end']:.1f}s]\n{s['text']}"
-        if total + len(line) > max_chars:
-            break
-        lines.append(line)
-        total += len(line)
+        if total + len(line) > max_chars: break
+        lines.append(line); total += len(line)
     return "\n---\n".join(lines)
 
-def ask_llm(oai_client: OpenAI, task: str, user_query: str, segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+def ask_llm(task: str, user_query: str, segments: List[Dict[str, Any]]) -> Dict[str, Any]:
     schema = SCHEMAS[task]
     context_block = format_context_block(segments)
     prompt = (
-        f"Task: {task}. {PRESET_HINTS[task]}\nDesired JSON schema: {schema['instruction']}\n\n"
-        f"User query (may be empty): {user_query}\n\nContext:\n{context_block}\n\n"
+        f"Task: {task}. {PRESET_HINTS[task]}\n"
+        f"Desired JSON schema: {schema['instruction']}\n\n"
+        f"User query (may be empty): {user_query}\n\n"
+        f"Context:\n{context_block}\n\n"
         f"Return ONLY valid compact JSON with keys: {', '.join(schema['keys'])}."
     )
-    resp = oai_client.chat.completions.create(
-        model=st.session_state["openai_model"],
+    resp = oai.chat.completions.create(
+        model=REASONING_MODEL,
         temperature=0.2,
         response_format={"type": "json_object"},
         messages=[
@@ -235,24 +173,75 @@ def ask_llm(oai_client: OpenAI, task: str, user_query: str, segments: List[Dict[
     except Exception:
         return {"_raw": resp.choices[0].message.content}
 
-# ----------------------------
+# ---------- Retrieval ----------
+def retrieve_segments_general(user_query: str, hint: str, top_k: int,
+                              allowed_filenames: Optional[set] = None) -> List[Dict[str, Any]]:
+    """Top-K globally (used by preset insights except Custom Analyst)."""
+    q = f"{user_query}\nTask: {hint}".strip()
+    q_vec = embed_texts([q])[0]
+    scored = []
+    for rec in st.session_state["records"]:
+        if allowed_filenames and rec["filename"] not in allowed_filenames:
+            continue
+        segs = rec.get("segments", [])
+        vecs = rec.get("embed_vectors", np.zeros((0, 3072), dtype=np.float32))
+        for i, seg in enumerate(segs):
+            sim = cosine_sim(q_vec, vecs[i]) if i < len(vecs) else 0.0
+            scored.append((sim, rec["filename"], seg))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = scored[:top_k]
+    return [{
+        "filename": fname,
+        "start": seg["start"],
+        "end": seg["end"],
+        "text": seg["text"],
+        "score": float(sim)
+    } for (sim, fname, seg) in top]
+
+def retrieve_segments_round_robin(user_query: str, hint: str, per_file_k: int,
+                                  allowed_filenames: set) -> List[Dict[str, Any]]:
+    """Ensure coverage across selected files: take top-N per file."""
+    q = f"{user_query}\nTask: {hint}".strip()
+    q_vec = embed_texts([q])[0]
+    per_file_lists = []
+    for rec in st.session_state["records"]:
+        if rec["filename"] not in allowed_filenames:
+            continue
+        local = []
+        segs = rec.get("segments", [])
+        vecs = rec.get("embed_vectors", np.zeros((0, 3072), dtype=np.float32))
+        for i, seg in enumerate(segs):
+            sim = cosine_sim(q_vec, vecs[i]) if i < len(vecs) else 0.0
+            local.append((sim, rec["filename"], seg))
+        local.sort(key=lambda x: x[0], reverse=True)
+        per_file_lists.append(local[:per_file_k])
+
+    # flatten (we could do strict round-robin; here simple concat is okay)
+    out = []
+    for local in per_file_lists:
+        for sim, fname, seg in local:
+            out.append({
+                "filename": fname,
+                "start": seg["start"],
+                "end": seg["end"],
+                "text": seg["text"],
+                "score": float(sim)
+            })
+    return out
+
+# =========================
 # Header
-# ----------------------------
+# =========================
 col1, col2 = st.columns([0.8, 0.2])
 with col1:
-    st.title("🎧 Call Insights Desk — OpenAI-only")
-    st.caption("Upload calls → Transcribe (Whisper) → Ask → Get evidence-backed answers")
+    st.title("🎧 Call Insights Desk")
+    st.caption("Upload calls → Transcribe → Select → Ask → Get evidence-backed answers")
 with col2:
-    st.write("")
-    st.write("")
-    st.markdown("**Mode:** Prototype")
+    st.markdown("**Mode:** Internal Pilot")
 
-if not oai:
-    st.warning("Enter your OpenAI API key in the sidebar to begin.")
-
-# ----------------------------
+# =========================
 # 1) Upload & Transcribe
-# ----------------------------
+# =========================
 st.header("1) Upload & Transcribe")
 files = st.file_uploader(
     "Drop multiple audio files",
@@ -260,17 +249,14 @@ files = st.file_uploader(
     accept_multiple_files=True,
 )
 
-transcribe_btn = st.button("Transcribe with Whisper (whisper-1)", disabled=not (files and oai))
-
-if transcribe_btn and oai:
+if st.button("Transcribe", disabled=not files):
     new_records = []
     progress = st.progress(0)
     for i, f in enumerate(files):
         try:
-            tr = transcribe_file(oai, f.name, f.getvalue())
+            tr = transcribe_file(f.name, f.getvalue())
             segs = tr["segments"] if tr else []
-            # Embed segment texts
-            vecs = embed_texts(oai, [s["text"] for s in segs], st.session_state["embed_model"]) if segs else np.zeros((0,3072), dtype=np.float32)
+            vecs = embed_texts([s["text"] for s in segs]) if segs else np.zeros((0,3072), dtype=np.float32)
             new_records.append({
                 "filename": f.name,
                 "audio_bytes": f.getvalue(),
@@ -281,96 +267,210 @@ if transcribe_btn and oai:
             st.error(f"Failed to transcribe {f.name}: {e}")
         progress.progress(int((i+1)/max(len(files),1)*100))
     st.session_state["records"].extend(new_records)
-    st.success(f"Transcribed & indexed {len(new_records)} file(s). Total indexed: {len(st.session_state['records'])}")
+    st.success(f"Transcribed & indexed {len(new_records)} file(s). Total: {len(st.session_state['records'])}")
 
-# Quick summary table
+# Quick summary
 if st.session_state["records"]:
     st.subheader("Indexed files")
-    df_idx = pd.DataFrame([
-        {"filename": r["filename"], "segments": len(r["segments"]) } for r in st.session_state["records"]
-    ])
+    df_idx = pd.DataFrame([{"filename": r["filename"], "segments": len(r["segments"])} for r in st.session_state["records"]])
     st.dataframe(df_idx, use_container_width=True, hide_index=True)
 
-# ----------------------------
-# 2) Ask the Calls
-# ----------------------------
-st.header("2) Ask the Calls")
+# =========================
+# 2) Select Calls (filter)
+# =========================
+if st.session_state["records"]:
+    st.header("2) Select Calls")
+    all_filenames = [r["filename"] for r in st.session_state["records"]]
+    search = st.text_input("Search by filename / customer / order (matches filename text)")
+
+    if search:
+        filtered = [fn for fn in all_filenames if search.lower() in fn.lower()]
+    else:
+        filtered = all_filenames
+
+    cols = st.columns([0.6, 0.4])
+    with cols[0]:
+        chosen = st.multiselect("Choose from indexed files", options=filtered, default=sorted(st.session_state["selected_files"] & set(filtered)))
+    with cols[1]:
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Select all (filtered)"):
+                st.session_state["selected_files"] = set(filtered)
+                chosen = filtered
+        with c2:
+            if st.button("Clear selection"):
+                st.session_state["selected_files"] = set()
+                chosen = []
+
+    st.session_state["selected_files"] = set(chosen)
+    st.caption(f"Selected: {len(st.session_state['selected_files'])} / {len(all_filenames)} files")
+
+# =========================
+# 3) Ask the Calls
+# =========================
+st.header("3) Ask the Calls")
 colA, colB = st.columns([0.65, 0.35])
 with colA:
-    chosen = st.multiselect("Choose insights", options=INSIGHTS, default=["RCA", "Destinations/Products", "Refund Commitments"]) 
-    user_query = st.text_area("Your question (optional)", placeholder="e.g., 'Why did voucher delivery fail and which destinations were mentioned?'", height=80)
+    selected_insights = st.multiselect(
+        "Choose insights",
+        options=INSIGHTS,
+        default=["RCA", "Destinations/Products", "Refund Commitments"]
+    )
+    user_query = st.text_area(
+        "Your question (for Custom Analyst or to refine other insights)",
+        placeholder="e.g., 'Summarize these 5 calls and give a timeline + action items.'",
+        height=80
+    )
 with colB:
     st.metric("Segments in index", sum(len(r.get("segments", [])) for r in st.session_state["records"]))
     st.metric("Files indexed", len(st.session_state["records"]))
+    st.metric("Files selected", len(st.session_state["selected_files"]))
 
-analyze_btn = st.button("Analyze", disabled=not (oai and st.session_state["records"] and chosen))
+can_analyze = bool(st.session_state["records"]) and bool(selected_insights) and (("Custom Analyst" not in selected_insights) or st.session_state["selected_files"])
+if st.button("Analyze", disabled=not can_analyze):
+    with st.spinner("Analyzing…"):
+        results = {}
+        allowed = set(st.session_state["selected_files"]) if st.session_state["selected_files"] else None
 
-results = {}
-if analyze_btn:
-    with st.spinner("Thinking…"):
-        for task in chosen:
-            top_segments = retrieve_segments(oai, user_query or task, PRESET_HINTS[task], st.session_state["top_k"]) 
+        for task in selected_insights:
+            if task == "Custom Analyst":
+                if not allowed:
+                    st.warning("Select at least one file for Custom Analyst.")
+                    continue
+                # Ensure coverage per selected file
+                top_segments = retrieve_segments_round_robin(
+                    user_query or "Summarize the selected calls", PRESET_HINTS[task],
+                    per_file_k=TOP_K_PER_FILE, allowed_filenames=allowed
+                )
+            else:
+                top_segments = retrieve_segments_general(
+                    user_query or task, PRESET_HINTS[task], TOP_K_DEFAULT,
+                    allowed_filenames=allowed  # if user selected files, constrain
+                )
             results[task] = {
                 "segments": top_segments,
-                "answer": ask_llm(oai, task, user_query, top_segments)
+                "answer": ask_llm(task, user_query, top_segments)
             }
-    st.success("Analysis complete.")
+        st.session_state["last_results"] = results
+        st.success("Analysis complete.")
 
-# ----------------------------
-# 3) Results (tabs)
-# ----------------------------
+# =========================
+# 4) Results (tabs)
+# =========================
+def render_rca(ans: Dict[str, Any]):
+    st.markdown("**Summary**")
+    st.write(ans.get("summary", "—"))
+    st.markdown("**What went wrong**")
+    for item in ans.get("what_went_wrong", []) or []:
+        st.write(f"- {item}")
+    st.markdown("**Immediate fixes**")
+    for item in ans.get("immediate_fixes", []) or []:
+        st.write(f"- {item}")
+    st.markdown("**Preventive actions**")
+    for item in ans.get("preventive_actions", []) or []:
+        st.write(f"- {item}")
+
+def render_destinations(ans: Dict[str, Any]):
+    items = ans.get("items", []) or []
+    if not items:
+        st.write("—")
+        return
+    for it in items:
+        badge = "Destination" if it.get("type") == "destination" else "Product"
+        st.write(f"- **{badge}:** {it.get('value','—')}")
+
+def render_commitments(ans: Dict[str, Any]):
+    st.write(f"**Answer:** {ans.get('answer','—')}")
+    notes = ans.get("notes")
+    if notes: st.caption(notes)
+
+def render_requirements(ans: Dict[str, Any]):
+    for r in ans.get("requirements", []) or []:
+        st.write(f"- **{r.get('requirement','—')}** (urgency: {r.get('urgency','—')})")
+
+def render_voc(ans: Dict[str, Any]):
+    st.markdown("**Summary**")
+    st.write(ans.get("summary", "—"))
+    st.markdown("**Themes**")
+    for t in ans.get("themes", []) or []:
+        st.write(f"- {t.get('theme','—')} (count: {t.get('count',0)}, sentiment: {t.get('sentiment','—')})")
+
+def render_custom_analyst(ans: Dict[str, Any]):
+    st.markdown("**Executive Summary**")
+    st.write(ans.get("executive_summary", "—"))
+    st.markdown("**Per-call bullets**")
+    for pc in ans.get("per_call", []) or []:
+        st.write(f"- **{pc.get('file','—')}**")
+        for b in pc.get("bullets", []) or []:
+            st.write(f"   • {b}")
+    st.markdown("**Timeline**")
+    for t in ans.get("timeline", []) or []:
+        when = t.get("when","")
+        file = t.get("file","")
+        st.write(f"- {when}: {file} [{t.get('start_s',0)}–{t.get('end_s',0)}s] — {t.get('event','')}")
+    st.markdown("**Action items**")
+    for a in ans.get("action_items", []) or []:
+        st.write(f"- {a}")
+
+def build_evidence(task: str, ans: Dict[str, Any]) -> pd.DataFrame:
+    rows = []
+    def add(file, s, e, q, extra=None):
+        row = {"file": file, "start_s": s, "end_s": e, "quote": q}
+        if extra: row.update(extra)
+        rows.append(row)
+
+    try:
+        if task == "RCA":
+            for ev in ans.get("evidence", []) or []:
+                add(ev.get("file",""), ev.get("start_s",0), ev.get("end_s",0), ev.get("quote",""))
+        elif task == "Destinations/Products":
+            for it in ans.get("items", []) or []:
+                for ev in it.get("evidence", []) or []:
+                    add(ev.get("file",""), ev.get("start_s",0), ev.get("end_s",0), ev.get("quote",""),
+                        {"type": it.get("type",""), "value": it.get("value","")})
+        elif task == "Refund Commitments":
+            for c in ans.get("commitments", []) or []:
+                add(c.get("file",""), c.get("start_s",0), c.get("end_s",0), c.get("quote",""),
+                    {"commitment_type": c.get("type",""), "confidence": c.get("confidence",0)})
+        elif task == "Requirements":
+            for r in ans.get("requirements", []) or []:
+                for ev in r.get("evidence", []) or []:
+                    add(ev.get("file",""), ev.get("start_s",0), ev.get("end_s",0), ev.get("quote",""),
+                        {"requirement": r.get("requirement",""), "urgency": r.get("urgency","")})
+        elif task == "VoC":
+            for t in ans.get("themes", []) or []:
+                for q in t.get("quotes", []) or []:
+                    add(q.get("file",""), q.get("start_s",0), q.get("end_s",0), q.get("quote",""),
+                        {"theme": t.get("theme",""), "sentiment": t.get("sentiment",""), "count": t.get("count",0)})
+        elif task == "Custom Analyst":
+            for ev in ans.get("evidence", []) or []:
+                add(ev.get("file",""), ev.get("start_s",0), ev.get("end_s",0), ev.get("quote",""))
+    except Exception:
+        pass
+    return pd.DataFrame(rows)
+
+results = st.session_state.get("last_results", {})
 if results:
-    tabs = st.tabs(chosen)
-    for (task, tab) in zip(chosen, tabs):
+    tabs = st.tabs(list(results.keys()))
+    for (task, tab) in zip(results.keys(), tabs):
         with tab:
             st.subheader(task)
-            ans = results[task]["answer"]
-            st.markdown("**Answer (JSON):**")
-            st.code(json.dumps(ans, ensure_ascii=False, indent=2))
+            ans = results[task]["answer"] or {}
 
-            # Build an evidence table if present
-            evidence_rows = []
-            def add_evidence(file, start_s, end_s, quote, extra: Dict[str, Any] | None = None):
-                row = {
-                    "file": file,
-                    "start_s": start_s,
-                    "end_s": end_s,
-                    "quote": quote,
-                }
-                if extra:
-                    row.update(extra)
-                evidence_rows.append(row)
+            # Friendly renderers
+            if task == "RCA": render_rca(ans)
+            elif task == "Destinations/Products": render_destinations(ans)
+            elif task == "Refund Commitments": render_commitments(ans)
+            elif task == "Requirements": render_requirements(ans)
+            elif task == "VoC": render_voc(ans)
+            elif task == "Custom Analyst": render_custom_analyst(ans)
 
-            # Parse per schema
-            try:
-                if task == "RCA":
-                    for e in ans.get("evidence", []) or []:
-                        add_evidence(e.get("file",""), e.get("start_s",0), e.get("end_s",0), e.get("quote",""))
-                elif task == "Destinations/Products":
-                    for item in ans.get("items", []) or []:
-                        for e in item.get("evidence", []) or []:
-                            add_evidence(e.get("file",""), e.get("start_s",0), e.get("end_s",0), e.get("quote",""),
-                                         {"type": item.get("type",""), "value": item.get("value","")})
-                elif task == "Refund Commitments":
-                    for c in ans.get("commitments", []) or []:
-                        add_evidence(c.get("file",""), c.get("start_s",0), c.get("end_s",0), c.get("quote",""),
-                                     {"commitment_type": c.get("type",""), "confidence": c.get("confidence",0)})
-                elif task == "Requirements":
-                    for r in ans.get("requirements", []) or []:
-                        for e in r.get("evidence", []) or []:
-                            add_evidence(e.get("file",""), e.get("start_s",0), e.get("end_s",0), e.get("quote",""),
-                                         {"requirement": r.get("requirement",""), "urgency": r.get("urgency","")})
-                elif task == "VoC":
-                    for t in ans.get("themes", []) or []:
-                        for q in t.get("quotes", []) or []:
-                            add_evidence(q.get("file",""), q.get("start_s",0), q.get("end_s",0), q.get("quote",""),
-                                         {"theme": t.get("theme",""), "sentiment": t.get("sentiment",""), "count": t.get("count",0)})
-            except Exception as e:
-                st.warning(f"Could not parse evidence for {task}: {e}")
-
-            if evidence_rows:
-                st.markdown("**Evidence** (click the time in your player to verify):")
-                df_ev = pd.DataFrame(evidence_rows)
+            # Evidence
+            df_ev = build_evidence(task, ans)
+            st.markdown("**Evidence**")
+            if df_ev.empty:
+                st.write("—")
+            else:
                 st.dataframe(df_ev, use_container_width=True, hide_index=True)
                 csv = df_ev.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -380,19 +480,19 @@ if results:
                     mime="text/csv"
                 )
 
-# ----------------------------
-# 4) Simple Audio Browser
-# ----------------------------
+# =========================
+# 5) Audio Player
+# =========================
 if st.session_state["records"]:
-    st.header("4) Audio Player (manual seek)")
+    st.header("4) Audio Player")
     sel = st.selectbox("Choose a file to play", options=[r["filename"] for r in st.session_state["records"]])
-    chosen_rec = next((r for r in st.session_state["records"] if r["filename"] == sel), None)
-    if chosen_rec:
-        st.audio(chosen_rec["audio_bytes"], format="audio/mpeg")
-        st.caption("Use the evidence timestamps above to seek manually in the player.")
+    rec = next((r for r in st.session_state["records"] if r["filename"] == sel), None)
+    if rec:
+        st.audio(rec["audio_bytes"], format="audio/mpeg")
+        st.caption("Use timestamps from Evidence to seek in your player.")
 
-# ----------------------------
+# =========================
 # Footer
-# ----------------------------
+# =========================
 st.markdown("---")
-st.caption("PII redaction is not applied in this prototype. Use internal data only. © Your Company")
+st.caption("For internal use only. This pilot does not apply PII redaction. © Your Company")
