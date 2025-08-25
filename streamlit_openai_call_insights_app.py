@@ -793,7 +793,7 @@ def _render_cs_audit(cs_ans: Dict[str, Any]):
     with k2: st.markdown(f'<div class="kpi"><div class="muted">Calls Scored</div><div class="big">{len(pc)}</div></div>', unsafe_allow_html=True)
     with k3:
      rub = _get_rubric_df()
-st.markdown(
+    st.markdown(
     f'<div class="kpi"><div class="muted">Parameters</div><div class="big">{len(rub)}</div></div>',
     unsafe_allow_html=True
 )
@@ -805,9 +805,9 @@ st.markdown(
         st.info("No calls to display.")
         return
 
-# Filters
-fcol1, fcol2, fcol3, fcol4 = st.columns([0.25, 0.25, 0.25, 0.25])
-with fcol1:
+    # Filters
+    fcol1, fcol2, fcol3, fcol4 = st.columns([0.25, 0.25, 0.25, 0.25])
+    with fcol1:
     sev_filter = st.multiselect(
         "Severity",
         options=sorted(df_sum["Severity"].unique()),
