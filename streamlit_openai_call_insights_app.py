@@ -1020,6 +1020,18 @@ def _render_cs_audit(cs_ans: Dict[str, Any]):
                 use_container_width=True
             )
 
+# 5) Display CS Audit Results
+# =========================
+results = st.session_state.get("last_results", {})
+if "CS General Audit" in results:
+    st.markdown("### 5) Results & Dashboards: CS General Audit")
+    st.write('<div class="card">', unsafe_allow_html=True)
+    cs_data = results["CS General Audit"]
+    if cs_data and cs_data.get("answer"):
+        _render_cs_audit(cs_data["answer"])
+    else:
+        st.warning("CS General Audit was run, but no answer was generated.")
+    st.write('</div>', unsafe_allow_html=True)
 
 # RCA / VoC tabs and follow-ups
 results = st.session_state.get("last_results", {})
