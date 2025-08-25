@@ -85,6 +85,15 @@ def _sha256(b: bytes) -> str:
 def _mmss(sec: float) -> str:
     m = int((sec or 0)//60); s = int((sec or 0)%60); return f"{m:02d}:{s:02d}"
 
+def _get_rubric_df() -> pd.DataFrame:
+    """
+    Return a valid rubric DataFrame (uploaded/edited one if available, else the template).
+    """
+    rub = st.session_state.get("cs_rubric_df")
+    if isinstance(rub, pd.DataFrame) and not rub.empty:
+        return rub
+    return _rubric_template_df()
+
 def _extract_agent_name_from_filename(filename: str) -> str:
     """Extract agent name from patterns like [Name], (Name), or ' - Name'."""
     if not filename:
