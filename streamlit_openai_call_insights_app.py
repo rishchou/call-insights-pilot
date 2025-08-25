@@ -805,14 +805,14 @@ st.markdown(
         st.info("No calls to display.")
         return
 
-    # Filters
+# Filters
 fcol1, fcol2, fcol3, fcol4 = st.columns([0.25, 0.25, 0.25, 0.25])
 with fcol1:
-        sev_filter = st.multiselect(
-            "Severity",
-            options=sorted(df_sum["Severity"].unique()),
-            default=list(sorted(df_sum["Severity"].unique()))
-        )
+    sev_filter = st.multiselect(
+        "Severity",
+        options=sorted(df_sum["Severity"].unique()),
+        default=list(sorted(df_sum["Severity"].unique()))
+    )
     with fcol2:
         cat_filter = st.multiselect(
             "Category",
