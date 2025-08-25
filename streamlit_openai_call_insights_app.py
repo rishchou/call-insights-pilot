@@ -800,8 +800,8 @@ st.markdown(
 
     # Summary table with filters/search/pagination
 st.markdown("#### Summary (all calls)")
-    df_sum = _cs_build_summary_table(cs_ans)
-    if df_sum.empty:
+df_sum = _cs_build_summary_table(cs_ans)
+if df_sum.empty:
         st.info("No calls to display."); return
 
     # Filters
