@@ -799,54 +799,82 @@ st.markdown(
 )
 
     # Summary table with filters/search/pagination
-st.markdown("#### Summary (all calls)")
-df_sum = _cs_build_summary_table(cs_ans)
-if df_sum.empty:
-        st.info("No calls to display."); return
+    st.markdown("#### Summary (all calls)")
+    df_sum = _cs_build_summary_table(cs_ans)
+    if df_sum.empty:
+        st.info("No calls to display.")
+        return
 
     # Filters
-    fcol1,fcol2,fcol3,fcol4 = st.columns([0.25,0.25,0.25,0.25])
+    fcol1, fcol2, fcol3, fcol4 = st.columns([0.25, 0.25, 0.25, 0.25])
     with fcol1:
-        sev_filter = st.multiselect("Severity", options=sorted(df_sum["Severity"].unique()), default=list(sorted(df_sum["Severity"].unique())))
+        sev_filter = st.multiselect(
+            "Severity",
+            options=sorted(df_sum["Severity"].unique()),
+            default=list(sorted(df_sum["Severity"].unique()))
+        )
     with fcol2:
-        cat_filter = st.multiselect("Category", options=sorted(df_sum["Category"].unique()), default=list(sorted(df_sum["Category"].unique())))
+        cat_filter = st.multiselect(
+            "Category",
+            options=sorted(df_sum["Category"].unique()),
+            default=list(sorted(df_sum["Category"].unique()))
+        )
     with fcol3:
         min_score = st.number_input("Min Overall %", 0.0, 100.0, 0.0, 1.0)
     with fcol4:
         search = st.text_input("Search (file/agent/purpose)")
 
     filt = df_sum.copy()
-    if sev_filter: filt = filt[filt["Severity"].isin(sev_filter)]
-    if cat_filter: filt = filt[filt["Category"].isin(cat_filter)]
-    if min_score > 0: filt = filt[filt["Overall %"] >= min_score]
+    if sev_filter:
+        filt = filt[filt["Severity"].isin(sev_filter)]
+    if cat_filter:
+        filt = filt[filt["Category"].isin(cat_filter)]
+    if min_score > 0:
+        filt = filt[filt["Overall %"] >= min_score]
     if search:
         s = search.lower()
-        mask = (filt["File"].str.lower().str.contains(s)) | (filt["Agent"].str.lower().str.contains(s)) | (filt["Purpose"].str.lower().str.contains(s))
+        mask = (
+            filt["File"].str.lower().str.contains(s)
+            | filt["Agent"].str.lower().str.contains(s)
+            | filt["Purpose"].str.lower().str.contains(s)
+        )
         filt = filt[mask]
 
     # Pagination
-    page_size = st.selectbox("Rows per page", options=[10,25,50,100], index=1)
+    page_size = st.selectbox("Rows per page", options=[10, 25, 50, 100], index=1)
     total_rows = len(filt)
     total_pages = max(1, int(np.ceil(total_rows / page_size)))
     page = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1)
-    start = (page-1)*page_size; end = start + page_size
+    start = (page - 1) * page_size
+    end = start + page_size
     st.dataframe(filt.iloc[start:end], use_container_width=True, hide_index=True)
-    st.caption(f"Showing {start+1}-{min(end,total_rows)} of {total_rows} rows")
+    st.caption(f"Showing {start+1}-{min(end, total_rows)} of {total_rows} rows")
 
     # Expand for details per call
     st.markdown("#### Call Details")
     for c in pc:
-        fname = c.get("file",""); if_row = filt["File"].isin([fname]).any()
-        if not if_row: continue
+        fname = c.get("file", "")
+        if_row = filt["File"].isin([fname]).any()
+        if not if_row:
+            continue
+
         with st.expander(f"{fname} — {c.get('purpose','')}"):
-            agent = c.get("agent_name","")
-            sev = (c.get("severity","") or "").lower()
-            sev_cls = "badge-low" if sev=="low" else "badge-medium" if sev=="medium" else "badge-high" if sev=="high" else ""
+            agent = c.get("agent_name", "")
+            sev = (c.get("severity", "") or "").lower()
+            sev_cls = (
+                "badge-low" if sev == "low"
+                else "badge-medium" if sev == "medium"
+                else "badge-high" if sev == "high"
+                else ""
+            )
             sev_badge = f'<span class="badge {sev_cls}">{sev.upper()}</span>' if sev else ""
-            st.markdown(f"**Agent:** {agent} &nbsp;&nbsp; **Overall:** {c.get('overall_weighted_score',0)}% &nbsp;&nbsp; {sev_badge}", unsafe_allow_html=True)
+            st.markdown(
+                f"**Agent:** {agent} &nbsp;&nbsp; **Overall:** {c.get('overall_weighted_score', 0)}% &nbsp;&nbsp; {sev_badge}",
+                unsafe_allow_html=True
+            )
             st.write(f"**Category:** {c.get('category','—')}")
             st.write(f"**Summary:** {c.get('summary','—')}")
-            sent = c.get("sentiment",{})
+            sent = c.get("sentiment", {})
             st.write(f"**Sentiment:** start={sent.get('start','—')}, mid={sent.get('mid','—')}, end={sent.get('end','—')}")
 
             # Parameter table (percent + NA)
@@ -856,19 +884,23 @@ if df_sum.empty:
                 dfp["Score %"] = dfp["pct"].round(2)
                 dfp["NA"] = dfp["na"].map(lambda x: "Yes" if x else "No")
                 dfp["Fatal"] = dfp["fatal_triggered"].map(lambda x: "Yes" if x else "No")
-                st.dataframe(dfp[["parameter","Score %","NA","Fatal","justification"]], use_container_width=True, hide_index=True)
+                st.dataframe(
+                    dfp[["parameter", "Score %", "NA", "Fatal", "justification"]],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             # Evidence flatten
-            ev_rows=[]
+            ev_rows = []
             for p in params:
-                for ev in p.get("evidence",[]) or []:
+                for ev in p.get("evidence", []) or []:
                     ev_rows.append({
-                        "parameter": p.get("parameter",""),
-                        "file": ev.get("file",""),
-                        "t": _mmss(ev.get("start_s",0)),
-                        "start_s": ev.get("start_s",0),
-                        "end_s": ev.get("end_s",0),
-                        "quote": ev.get("quote","")
+                        "parameter": p.get("parameter", ""),
+                        "file": ev.get("file", ""),
+                        "t": _mmss(ev.get("start_s", 0)),
+                        "start_s": ev.get("start_s", 0),
+                        "end_s": ev.get("end_s", 0),
+                        "quote": ev.get("quote", "")
                     })
             df_ev = pd.DataFrame(ev_rows)
             st.markdown("**Evidence**")
@@ -879,13 +911,14 @@ if df_sum.empty:
 
     # Dashboards
     st.markdown("### Dashboards")
-    # parameter performance
-    param_rows=[]
+
+    # Parameter performance
+    param_rows = []
     for c in pc:
-        fname=c.get("file","")
-        for p in c.get("parameters",[]) or []:
-            if p.get("na"): continue
-            param_rows.append({"parameter":p.get("parameter",""),"pct":p.get("pct",0.0)})
+        for p in c.get("parameters", []) or []:
+            if p.get("na"):
+                continue
+            param_rows.append({"parameter": p.get("parameter", ""), "pct": p.get("pct", 0.0)})
     dfa = pd.DataFrame(param_rows)
     if not dfa.empty and _HAS_PLOTLY:
         perf = dfa.groupby("parameter", as_index=False)["pct"].mean().sort_values("pct", ascending=True)
@@ -894,15 +927,15 @@ if df_sum.empty:
     elif not dfa.empty:
         st.dataframe(dfa.groupby("parameter", as_index=False)["pct"].mean(), use_container_width=True)
 
-    # severity distribution
-    sev_df = pd.DataFrame([{"Severity": (c.get("severity","") or "").title()} for c in pc])
+    # Severity distribution
+    sev_df = pd.DataFrame([{"Severity": (c.get("severity", "") or "").title()} for c in pc])
     if not sev_df.empty and _HAS_PLOTLY:
         sev_ct = sev_df.value_counts("Severity").reset_index(name="count")
         fig = px.pie(sev_ct, names="Severity", values="count", title="Severity Distribution")
         st.plotly_chart(fig, use_container_width=True)
 
-    # score histogram
-    sc_df = pd.DataFrame([{"overall": float(c.get("overall_weighted_score",0))} for c in pc])
+    # Score histogram
+    sc_df = pd.DataFrame([{"overall": float(c.get("overall_weighted_score", 0))} for c in pc])
     if not sc_df.empty and _HAS_PLOTLY:
         figh = px.histogram(sc_df, x="overall", nbins=10, title="Overall Score Distribution")
         st.plotly_chart(figh, use_container_width=True)
@@ -913,8 +946,9 @@ if df_sum.empty:
         by_agent = calls_table.groupby("Agent", as_index=False)["Overall %"].mean().sort_values("Overall %")
         figA = px.bar(by_agent, x="Overall %", y="Agent", orientation="h", title="Average Score by Agent")
         st.plotly_chart(figA, use_container_width=True)
+
         vol = calls_table["Agent"].value_counts().reset_index()
-        vol.columns=["Agent","Calls"]
+        vol.columns = ["Agent", "Calls"]
         figV = px.bar(vol, x="Calls", y="Agent", orientation="h", title="Calls per Agent")
         st.plotly_chart(figV, use_container_width=True)
 
@@ -924,26 +958,37 @@ if df_sum.empty:
 
     # a) audit_results.csv (flat)
     with colD1:
-        flat=[]
+        flat = []
         for c in pc:
-            fname=c.get("file",""); agent=c.get("agent_name","")
-            for p in c.get("parameters",[]) or []:
-                # pick first evidence if any
+            fname = c.get("file", "")
+            agent = c.get("agent_name", "")
+            for p in c.get("parameters", []) or []:
                 ev = (p.get("evidence") or [{}])[0]
                 flat.append({
-                    "file": fname, "agent_name": agent,
-                    "purpose": c.get("purpose",""), "category": c.get("category",""),
-                    "severity": c.get("severity",""), "overall_pct": c.get("overall_weighted_score",0),
-                    "parameter": p.get("parameter",""), "score_pct": round(float(p.get("pct",0.0)),2),
-                    "na": p.get("na", False), "fatal_triggered": p.get("fatal_triggered", False),
-                    "justification": p.get("justification",""),
-                    "ev_file": ev.get("file",""), "ev_start_s": ev.get("start_s",0), "ev_quote": ev.get("quote","")
+                    "file": fname,
+                    "agent_name": agent,
+                    "purpose": c.get("purpose", ""),
+                    "category": c.get("category", ""),
+                    "severity": c.get("severity", ""),
+                    "overall_pct": c.get("overall_weighted_score", 0),
+                    "parameter": p.get("parameter", ""),
+                    "score_pct": round(float(p.get("pct", 0.0)), 2),
+                    "na": p.get("na", False),
+                    "fatal_triggered": p.get("fatal_triggered", False),
+                    "justification": p.get("justification", ""),
+                    "ev_file": ev.get("file", ""),
+                    "ev_start_s": ev.get("start_s", 0),
+                    "ev_quote": ev.get("quote", "")
                 })
         df_flat = pd.DataFrame(flat)
         if not df_flat.empty:
-            st.download_button("⬇️ Download audit_results.csv",
-                               data=df_flat.to_csv(index=False).encode("utf-8"),
-                               file_name="audit_results.csv", mime="text/csv", use_container_width=True)
+            st.download_button(
+                "⬇️ Download audit_results.csv",
+                data=df_flat.to_csv(index=False).encode("utf-8"),
+                file_name="audit_results.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
         else:
             st.info("No audit rows to export yet.")
 
@@ -954,17 +999,25 @@ if df_sum.empty:
             if dft.empty:
                 st.info("No transcripts for selected calls.")
             else:
-                st.download_button("⬇️ transcripts_with_speaker.csv",
-                                   data=dft.to_csv(index=False).encode("utf-8"),
-                                   file_name="transcripts_with_speaker.csv", mime="text/csv",
-                                   use_container_width=True)
+                st.download_button(
+                    "⬇️ transcripts_with_speaker.csv",
+                    data=dft.to_csv(index=False).encode("utf-8"),
+                    file_name="transcripts_with_speaker.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
 
     # c) calls_overview.csv
     with colD3:
         if not calls_table.empty:
-            st.download_button("⬇️ calls_overview.csv",
-                               data=calls_table.to_csv(index=False).encode("utf-8"),
-                               file_name="calls_overview.csv", mime="text/csv", use_container_width=True)
+            st.download_button(
+                "⬇️ calls_overview.csv",
+                data=calls_table.to_csv(index=False).encode("utf-8"),
+                file_name="calls_overview.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
 
 # RCA / VoC tabs and follow-ups
 results = st.session_state.get("last_results", {})
