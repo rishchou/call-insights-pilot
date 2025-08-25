@@ -323,7 +323,7 @@ def _rubric_norm_and_maps(df: pd.DataFrame):
 # Retrieval (grouped per file to guarantee coverage)
 # =========================
 def _retrieve_by_file(user_query: str, hint: str, per_file_k: int,
-                      allowed_filenames: set) -> Dict[str, List[Dict[str, Any]]]:
+                        allowed_filenames: set) -> Dict[str, List[Dict[str, Any]]]:
     q_vec = _embed_texts([f"{user_query}\nTask: {hint}"])[0]
     grouped: Dict[str, List[Dict[str, Any]]] = {}
     for rec in st.session_state["records"]:
@@ -650,9 +650,9 @@ if "CS General Audit" in selected_insights:
     c_top1, c_top2, c_top3 = st.columns([0.35,0.35,0.30])
     with c_top1:
         st.download_button("⬇️ Download rubric template (CSV)",
-                           data=_download_template_csv_bytes(),
-                           file_name="cs_audit_rubric_template.csv", mime="text/csv",
-                           help="Columns: parameter, weight, max_score, fatal (yes/no). Weights must sum to 100.")
+                          data=_download_template_csv_bytes(),
+                          file_name="cs_audit_rubric_template.csv", mime="text/csv",
+                          help="Columns: parameter, weight, max_score, fatal (yes/no). Weights must sum to 100.")
     with c_top2:
         up = st.file_uploader("Upload rubric CSV", type=["csv"], key="cs_rubric_upload")
         if up is not None:
@@ -783,8 +783,6 @@ def _cs_build_summary_table(cs_ans: Dict[str, Any]) -> pd.DataFrame:
         })
     return pd.DataFrame(rows)
 
-# ✅ PASTE THIS ENTIRE CORRECTED FUNCTION INTO YOUR CODE
-
 def _render_cs_audit(cs_ans: Dict[str, Any]):
     pc = cs_ans.get("per_call", []) or []
     # KPIs
@@ -812,13 +810,13 @@ def _render_cs_audit(cs_ans: Dict[str, Any]):
     # Filters
     fcol1, fcol2, fcol3, fcol4 = st.columns([0.25, 0.25, 0.25, 0.25])
     with fcol1:
-        sev_filter = st.multoselect(
+        sev_filter = st.multiselect(
             "Severity",
             options=sorted(df_sum["Severity"].unique()),
             default=list(sorted(df_sum["Severity"].unique()))
         )
     with fcol2:
-        cat_filter = st.multoselect(
+        cat_filter = st.multiselect(
             "Category",
             options=sorted(df_sum["Category"].unique()),
             default=list(sorted(df_sum["Category"].unique()))
