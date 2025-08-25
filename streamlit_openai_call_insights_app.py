@@ -84,18 +84,38 @@ def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
 
 @st.cache_data(show_spinner=False)
 def _transcribe_file(filename: str, raw_bytes: bytes) -> Dict[str, Any]:
+    """
+    Whisper pass 1: original-language transcript (verbose_json)
+    Whisper pass 2: English translation via translations.create (verbose_json)
+    Returns: {text_orig, text_en, segments:[{start,end,text_orig,text_en}], language}
+    """
     tmp = os.path.join("/tmp", filename)
-    with open(tmp, "wb") as f: f.write(raw_bytes)
-    # Original
+    with open(tmp, "wb") as f:
+        f.write(raw_bytes)
+
+    # Pass 1: original-language transcription
     with open(tmp, "rb") as f1:
-        r_orig = oai.audio.transcriptions.create(model="whisper-1", file=f1, response_format="verbose_json", temperature=0)
+        r_orig = oai.audio.transcriptions.create(
+            model="whisper-1",
+            file=f1,
+            response_format="verbose_json",
+            temperature=0
+        )
     d_orig = r_orig.model_dump() if hasattr(r_orig, "model_dump") else json.loads(r_orig.json())
-    # English
+
+    # Pass 2: English translation (NOTE: use translations.create — no 'translate' arg)
     with open(tmp, "rb") as f2:
-        r_en = oai.audio.transcriptions.create(model="whisper-1", file=f2, response_format="verbose_json", temperature=0, translate=True)
+        r_en = oai.audio.translations.create(
+            model="whisper-1",
+            file=f2,
+            response_format="verbose_json",
+            temperature=0
+        )
     d_en = r_en.model_dump() if hasattr(r_en, "model_dump") else json.loads(r_en.json())
 
     language = d_orig.get("language") or "unknown"
+
+    # Align segments best-effort by index (both verbose_json responses usually include segments)
     segs_o = d_orig.get("segments", []) or []
     segs_e = d_en.get("segments", []) or []
     max_len = max(len(segs_o), len(segs_e))
@@ -109,6 +129,7 @@ def _transcribe_file(filename: str, raw_bytes: bytes) -> Dict[str, Any]:
             "text_orig": (so.get("text") or "").strip(),
             "text_en":   (se.get("text") or "").strip(),
         })
+
     return {
         "language": language,
         "text_orig": (d_orig.get("text") or "").strip(),
