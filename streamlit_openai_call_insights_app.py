@@ -783,20 +783,24 @@ def _cs_build_summary_table(cs_ans: Dict[str, Any]) -> pd.DataFrame:
         })
     return pd.DataFrame(rows)
 
+# ✅ PASTE THIS ENTIRE CORRECTED FUNCTION INTO YOUR CODE
+
 def _render_cs_audit(cs_ans: Dict[str, Any]):
     pc = cs_ans.get("per_call", []) or []
     # KPIs
-    all_scores = [float(x.get("overall_weighted_score",0)) for x in pc]
+    all_scores = [float(x.get("overall_weighted_score", 0)) for x in pc]
     avg = float(np.mean(all_scores)) if all_scores else 0.0
-    k1,k2,k3 = st.columns(3)
-    with k1: st.markdown(f'<div class="kpi"><div class="muted">Average Overall Score</div><div class="big">{avg:.2f}%</div></div>', unsafe_allow_html=True)
-    with k2: st.markdown(f'<div class="kpi"><div class="muted">Calls Scored</div><div class="big">{len(pc)}</div></div>', unsafe_allow_html=True)
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        st.markdown(f'<div class="kpi"><div class="muted">Average Overall Score</div><div class="big">{avg:.2f}%</div></div>', unsafe_allow_html=True)
+    with k2:
+        st.markdown(f'<div class="kpi"><div class="muted">Calls Scored</div><div class="big">{len(pc)}</div></div>', unsafe_allow_html=True)
     with k3:
-     rub = _get_rubric_df()
-    st.markdown(
-    f'<div class="kpi"><div class="muted">Parameters</div><div class="big">{len(rub)}</div></div>',
-    unsafe_allow_html=True
-)
+        rub = _get_rubric_df()
+        st.markdown(
+            f'<div class="kpi"><div class="muted">Parameters</div><div class="big">{len(rub)}</div></div>',
+            unsafe_allow_html=True
+        )
 
     # Summary table with filters/search/pagination
     st.markdown("#### Summary (all calls)")
@@ -808,13 +812,13 @@ def _render_cs_audit(cs_ans: Dict[str, Any]):
     # Filters
     fcol1, fcol2, fcol3, fcol4 = st.columns([0.25, 0.25, 0.25, 0.25])
     with fcol1:
-    sev_filter = st.multiselect(
-        "Severity",
-        options=sorted(df_sum["Severity"].unique()),
-        default=list(sorted(df_sum["Severity"].unique()))
-    )
+        sev_filter = st.multoselect(
+            "Severity",
+            options=sorted(df_sum["Severity"].unique()),
+            default=list(sorted(df_sum["Severity"].unique()))
+        )
     with fcol2:
-        cat_filter = st.multiselect(
+        cat_filter = st.multoselect(
             "Category",
             options=sorted(df_sum["Category"].unique()),
             default=list(sorted(df_sum["Category"].unique()))
