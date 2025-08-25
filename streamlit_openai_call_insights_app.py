@@ -711,40 +711,44 @@ can_analyze = bool(st.session_state["records"]) and bool(selected_insights) and 
 if st.button("Analyze", disabled=not can_analyze, use_container_width=True):
     with st.spinner("Analyzing…"):
         results = {}
-        allowed = set(st.session_state["selected_files"]) if st.session_state["selected_files"] else set([r["filename"] for r in st.session_state["records"]])
-
-        # Build embeddings once for any new files already done in upload.
+        allowed = set(st.session_state["selected_files"]) if st.session_state["selected_files"] else {r["filename"] for r in st.session_state["records"]}
 
         # CS General Audit (grouped per file)
         if "CS General Audit" in selected_insights:
             grouped = _retrieve_by_file(
                 user_query or "Customer Service general audit rubric scoring.",
                 "Score Customer Service inbound calls using a weighted rubric.",
-                per_file_k=6, allowed_filenames=allowed
+                per_file_k=6,
+                allowed_filenames=allowed
             )
-           rub = _get_rubric_df()
-rubric_json, weight_map, max_map, fatal_map = _rubric_norm_and_maps(rub)
+            # IMPORTANT: these two lines must be indented under the CS Audit block
+            rub = _get_rubric_df()
+            rubric_json, weight_map, max_map, fatal_map = _rubric_norm_and_maps(rub)
 
             ans = _ask_gemini_cs_audit(user_query, grouped, rubric_json)
-            ans = _recompute_and_inject(ans, weight_map, max_map, fatal_map)  # enforce NA + fatal + agent
-            # keep flattened segments for optional evidence context (not mandatory)
+            ans = _recompute_and_inject(ans, weight_map, max_map, fatal_map)  # NA handling + fatal + agent injection
+
+            # (optional) keep flattened segments for evidence table
             flat_segments = []
             for fname, segs in grouped.items():
-                for s in segs: flat_segments.append({"filename": fname, **s})
+                for s in segs:
+                    flat_segments.append({"filename": fname, **s})
+
             results["CS General Audit"] = {"segments": flat_segments, "answer": ans, "rubric": rubric_json}
 
-        # RCA
+        # RCA (optional)
         if "RCA" in selected_insights:
             segs = _retrieve_general(user_query or "RCA", _PRESET_HINTS["RCA"], k_general, allowed)
             results["RCA"] = {"segments": segs, "answer": _ask_gemini_simple("RCA", user_query, segs)}
 
-        # VoC
+        # VoC (optional)
         if "VoC" in selected_insights:
             segs = _retrieve_general(user_query or "VoC", _PRESET_HINTS["VoC"], k_general, allowed)
             results["VoC"] = {"segments": segs, "answer": _ask_gemini_simple("VoC", user_query, segs)}
 
         st.session_state["last_results"] = results
         st.success("Analysis complete.")
+
 
 # =========================
 # 5) Results & Exports
