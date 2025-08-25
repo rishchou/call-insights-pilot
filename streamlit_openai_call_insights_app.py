@@ -480,36 +480,70 @@ def _build_evidence(task: str, ans: Dict[str, Any]) -> pd.DataFrame:
     return df
 
 def _render_cs_audit(ans: Dict[str, Any]):
+    # Ensure there is a rubric df for counting parameters
+    rub = st.session_state.get("cs_rubric_df")
+    if rub is None:
+        try:
+            rub = _load_default_cs_rubric()
+            st.session_state["cs_rubric_df"] = rub
+        except Exception:
+            rub = None
+
+    param_count = int(len(rub)) if isinstance(rub, pd.DataFrame) else 0
+
     pc = ans.get("per_call", []) or []
+
     # KPIs
-    all_scores = [c.get("overall_weighted_score",0) for c in pc if isinstance(c,dict)]
+    all_scores = [c.get("overall_weighted_score", 0) for c in pc if isinstance(c, dict)]
     avg = float(np.mean(all_scores)) if all_scores else 0.0
     k1, k2, k3 = st.columns(3)
-    with k1: st.markdown('<div class="kpi"><div class="muted">Average Overall Score</div><div class="big">{:.2f}</div></div>'.format(avg), unsafe_allow_html=True)
-    with k2: st.markdown(f'<div class="kpi"><div class="muted">Calls Scored</div><div class="big">{len(pc)}</div></div>', unsafe_allow_html=True)
-    with k3: st.markdown(f'<div class="kpi"><div class="muted">Parameters</div><div class="big">{len(st.session_state.get("cs_rubric_df") or [])}</div></div>', unsafe_allow_html=True)
+    with k1:
+        st.markdown(
+            f'<div class="kpi"><div class="muted">Average Overall Score</div><div class="big">{avg:.2f}</div></div>',
+            unsafe_allow_html=True
+        )
+    with k2:
+        st.markdown(
+            f'<div class="kpi"><div class="muted">Calls Scored</div><div class="big">{len(pc)}</div></div>',
+            unsafe_allow_html=True
+        )
+    with k3:
+        st.markdown(
+            f'<div class="kpi"><div class="muted">Parameters</div><div class="big">{param_count}</div></div>',
+            unsafe_allow_html=True
+        )
 
     # Tables + cross-call aggregation
-    param_rows=[]
+    param_rows = []
     for c in pc:
-        fname=c.get("file","(file)")
-        st.markdown(f"**📞 {fname} — Overall:** {c.get('overall_weighted_score',0)}")
-        params=c.get("parameters",[]) or []
-        dfp=pd.DataFrame(params)
+        fname = c.get("file", "(file)")
+        st.markdown(f"**📞 {fname} — Overall:** {c.get('overall_weighted_score', 0)}")
+        params = c.get("parameters", []) or []
+        dfp = pd.DataFrame(params)
         if not dfp.empty:
             for rrow in params:
-                param_rows.append({"file":fname,"parameter":rrow.get("parameter",""),"score":rrow.get("score",0),"max_score":rrow.get("max_score",1)})
-            st.dataframe(dfp[["parameter","score","max_score","justification"]], use_container_width=True, hide_index=True)
+                param_rows.append({
+                    "file": fname,
+                    "parameter": rrow.get("parameter", ""),
+                    "score": rrow.get("score", 0),
+                    "max_score": rrow.get("max_score", 1)
+                })
+            st.dataframe(
+                dfp[["parameter", "score", "max_score", "justification"]],
+                use_container_width=True, hide_index=True
+            )
 
     st.markdown("### Dashboard")
     if param_rows:
-        dfa=pd.DataFrame(param_rows)
-        dfa["pct"]=(dfa["score"]/dfa["max_score"]).replace([np.inf,-np.inf],0.0)*100.0
-        perf=dfa.groupby("parameter",as_index=False)["pct"].mean().sort_values("pct",ascending=True)
-        if _HAS_PLOTLY and not perf.empty:
-            figp=px.bar(perf,x="pct",y="parameter",orientation="h",title="Average Parameter Performance (% of max)")
+        dfa = pd.DataFrame(param_rows)
+        dfa["pct"] = (dfa["score"] / dfa["max_score"]).replace([np.inf, -np.inf], 0.0) * 100.0
+        perf = dfa.groupby("parameter", as_index=False)["pct"].mean().sort_values("pct", ascending=True)
+        try:
+            import plotly.express as px
+            figp = px.bar(perf, x="pct", y="parameter", orientation="h",
+                          title="Average Parameter Performance (% of max)")
             st.plotly_chart(figp, use_container_width=True)
-        else:
+        except Exception:
             st.dataframe(perf, use_container_width=True)
     else:
         st.info("No parameter data to chart yet.")
