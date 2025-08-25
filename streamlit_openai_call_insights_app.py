@@ -713,8 +713,9 @@ if st.button("Analyze", disabled=not can_analyze, use_container_width=True):
                 "Score Customer Service inbound calls using a weighted rubric.",
                 per_file_k=6, allowed_filenames=allowed
             )
-            rub = st.session_state.get("cs_rubric_df") or _rubric_template_df()
-            rubric_json, weight_map, max_map, fatal_map = _rubric_norm_and_maps(rub)
+           rub = _get_rubric_df()
+rubric_json, weight_map, max_map, fatal_map = _rubric_norm_and_maps(rub)
+
             ans = _ask_gemini_cs_audit(user_query, grouped, rubric_json)
             ans = _recompute_and_inject(ans, weight_map, max_map, fatal_map)  # enforce NA + fatal + agent
             # keep flattened segments for optional evidence context (not mandatory)
@@ -778,8 +779,11 @@ def _render_cs_audit(cs_ans: Dict[str, Any]):
     with k1: st.markdown(f'<div class="kpi"><div class="muted">Average Overall Score</div><div class="big">{avg:.2f}%</div></div>', unsafe_allow_html=True)
     with k2: st.markdown(f'<div class="kpi"><div class="muted">Calls Scored</div><div class="big">{len(pc)}</div></div>', unsafe_allow_html=True)
     with k3:
-        rub = st.session_state.get("cs_rubric_df") or _rubric_template_df()
-        st.markdown(f'<div class="kpi"><div class="muted">Parameters</div><div class="big">{len(rub)}</div></div>', unsafe_allow_html=True)
+     rub = _get_rubric_df()
+st.markdown(
+    f'<div class="kpi"><div class="muted">Parameters</div><div class="big">{len(rub)}</div></div>',
+    unsafe_allow_html=True
+)
 
     # Summary table with filters/search/pagination
     st.markdown("#### Summary (all calls)")
