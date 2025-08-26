@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 import io
 
-# Import the custom modules for audio processing and AI logic
+# Import the custom modules
 import audio_processing
 import ai_engine
 
@@ -20,7 +20,6 @@ st.set_page_config(
 # SESSION STATE INITIALIZATION
 # ======================================================================================
 
-# Using a dictionary for records makes it easier to access data by filename
 if "records" not in st.session_state:
     st.session_state.records = {}
 
@@ -35,10 +34,9 @@ if "run_history" not in st.session_state:
 # ======================================================================================
 
 def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
-    """Converts the full analysis results into a high-level summary DataFrame."""
+    """Converts the analysis results into a high-level summary DataFrame."""
     summary_data = []
     for file_name, results in analysis_results.items():
-        # Calculate an average score from the 'scores' part of the results
         scores = [s['details'].get('score', 0) for s in results.get('scores', [])]
         avg_score = sum(scores) / len(scores) if scores else 0
         
@@ -68,6 +66,21 @@ def _create_detailed_df(analysis_results: dict) -> pd.DataFrame:
             })
     return pd.DataFrame(detailed_data)
 
+def _create_transcript_df(analysis_results: dict) -> pd.DataFrame:
+    """Creates a DataFrame containing the full, speaker-labeled transcript for all analyzed calls."""
+    transcript_data = []
+    for file_name, results in analysis_results.items():
+        segments = results.get("transcript_data", {}).get("segments", [])
+        if segments:
+            for seg in segments:
+                transcript_data.append({
+                    "File Name": file_name,
+                    "Timestamp (start)": f"{seg.get('start', 0):.2f}",
+                    "Speaker": seg.get('speaker', 'UNKNOWN'),
+                    "Transcript": seg.get('text', '')
+                })
+    return pd.DataFrame(transcript_data)
+
 # ======================================================================================
 # UI PAGES
 # ======================================================================================
@@ -85,7 +98,6 @@ def page_call_analysis():
             accept_multiple_files=True
         )
 
-        # This section now calls the real, multi-stage audio processing function
         if files:
             for file in files:
                 if file.name not in st.session_state.records:
@@ -97,7 +109,6 @@ def page_call_analysis():
                     }
             st.success(f"{len(st.session_state.records)} file(s) are processed and ready for analysis.")
             
-            # Display a preview of a transcript to confirm it worked
             if st.session_state.records:
                 first_file_name = list(st.session_state.records.keys())[0]
                 transcript_preview = st.session_state.records[first_file_name]["transcript_data"].get("english_transcript", "")
@@ -125,7 +136,6 @@ def page_call_analysis():
         else:
             with st.spinner("Running full analysis... This may take several minutes."):
                 all_results = {}
-                # The rubric is a placeholder. In the future, this will be loaded from the Rubric Editor page.
                 placeholder_rubric = {
                     "Call Greetings": "90-100: Professional greeting + agent ID + offer to help...",
                     "Active Listening": "90-100: Paraphrases customer issue and confirms understanding..."
@@ -141,7 +151,6 @@ def page_call_analysis():
                     
                     st.info(f"Analyzing: {file_name}...")
                     
-                    # This is the full, multi-stage AI analysis pipeline
                     all_results[file_name] = {
                         "triage": ai_engine.run_initial_triage(transcript_text, selected_model),
                         "outcome": ai_engine.run_business_outcome_analysis(transcript_text, selected_model),
@@ -149,10 +158,9 @@ def page_call_analysis():
                             {"parameter": param, "details": ai_engine.score_single_parameter(transcript_text, param, anchors, selected_model)}
                             for param, anchors in placeholder_rubric.items()
                         ],
-                        "transcript_data": record["transcript_data"] # Include the rich transcript data in the final results
+                        "transcript_data": record["transcript_data"]
                     }
                 
-                # Save results and update history
                 st.session_state.analysis_results = all_results
                 st.session_state["run_history"].append({
                     "run_id": f"Analysis - {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}",
@@ -162,7 +170,6 @@ def page_call_analysis():
                 })
                 st.success("Analysis Complete!")
                 st.balloons()
-
 
 def page_dashboard():
     """UI for the main results dashboard."""
@@ -182,11 +189,9 @@ def page_dashboard():
         st.markdown("#### Call Overview")
         st.dataframe(summary_df, use_container_width=True)
         
-        # Display a detailed breakdown for each analyzed call
         for file_name, results in st.session_state.analysis_results.items():
             with st.expander(f"**Detailed Breakdown for: {file_name}**"):
                 st.write("**Full Transcript (with speaker labels):**")
-                # Display the structured, speaker-labeled transcript if available
                 transcript_segments = results.get("transcript_data", {}).get("segments", [])
                 if transcript_segments:
                     for segment in transcript_segments:
@@ -213,6 +218,7 @@ def page_dashboard():
         st.markdown("#### Download Reports")
         
         detailed_df = _create_detailed_df(st.session_state.analysis_results)
+        transcript_df = _create_transcript_df(st.session_state.analysis_results)
         
         st.download_button(
             label="⬇️ Download Summary Report (CSV)",
@@ -225,11 +231,19 @@ def page_dashboard():
             data=detailed_df.to_csv(index=False).encode('utf-8'),
             file_name="detailed_audit_report.csv", mime="text/csv"
         )
+        
+        # --- NEW TRANSCRIPT DOWNLOAD BUTTON ---
+        if not transcript_df.empty:
+            st.download_button(
+                label="⬇️ Download Full Transcripts (CSV)",
+                data=transcript_df.to_csv(index=False).encode('utf-8'),
+                file_name="full_transcripts.csv", mime="text/csv"
+            )
 
 def page_rubric_editor():
     """UI for the rubric editor page (placeholder)."""
     st.title("📝 Rubric Editor")
-    st.info("This is a placeholder for the rubric editor. In a full app, changes made here would be saved and used by the AI engine.")
+    st.info("This is a placeholder for the rubric editor.")
 
 def page_run_history():
     """UI for the run history page."""
@@ -240,7 +254,6 @@ def page_run_history():
     for run in reversed(st.session_state["run_history"]):
         with st.expander(f"**{run['run_id']}**"):
             st.json(run['results'])
-
 
 # ======================================================================================
 # SIDEBAR & MAIN APP LOGIC (PAGE ROUTING)
@@ -255,5 +268,4 @@ pages = {
 }
 page_name = st.sidebar.radio("Navigation", pages.keys())
 
-# This calls the function corresponding to the selected page
 pages[page_name]()
