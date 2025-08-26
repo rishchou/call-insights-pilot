@@ -14,6 +14,7 @@ AVAILABLE_MODELS = {
 
 # --- Helper Functions ---
 def _json_guard(text_response: str) -> dict:
+    """Ensures the AI response is a valid JSON object."""
     try:
         start = text_response.find('{')
         end = text_response.rfind('}')
@@ -23,60 +24,105 @@ def _json_guard(text_response: str) -> dict:
         return {"error": "Failed to parse AI response as JSON.", "raw_response": text_response}
     return {"error": "No valid JSON object found in the response.", "raw_response": text_response}
 
-def call_ai_engine(prompt: str, selected_model: str, placeholder_response: dict) -> dict:
+def call_ai_engine(prompt: str, selected_model: str) -> dict:
     """
-    Calls the selected AI engine. For this version, it will return a placeholder response
-    to allow UI development without making real API calls.
+    Calls the selected AI engine (GPT or Gemini) with a given prompt
+    and returns a structured dictionary.
     """
-    # In a real implementation, you would remove the placeholder_response and make a live API call.
-    # For now, we simulate a successful call.
-    print(f"Simulating AI call for model: {selected_model}")
-    print(f"Prompt: {prompt[:200]}...") # Print first 200 chars of prompt for debugging
-    return placeholder_response
+    try:
+        if "Gemini" in selected_model:
+            if not GEMINI_API_KEY: return {"error": "Gemini API key is not configured."}
+            genai.configure(api_key=GEMINI_API_KEY)
+            model = genai.GenerativeModel(
+                AVAILABLE_MODELS[selected_model],
+                generation_config={"temperature": 0.2, "response_mime_type": "application/json"}
+            )
+            response = model.generate_content(prompt)
+            return _json_guard(response.text)
+            
+        elif "GPT" in selected_model:
+            if not OPENAI_API_KEY: return {"error": "OpenAI API key is not configured."}
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            response = client.chat.completions.create(
+                model=AVAILABLE_MODELS[selected_model],
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.2
+            )
+            return _json_guard(response.choices[0].message.content)
+        else:
+            return {"error": "Invalid model selected."}
+    except Exception as e:
+        st.error(f"Error calling AI engine: {e}")
+        return {"error": str(e)}
 
+# --- Core Analysis Functions ---
 
-# --- Core Analysis Functions with Placeholders ---
-
+@st.cache_data(show_spinner="Running initial triage...")
 def run_initial_triage(transcript: str, selected_model: str) -> dict:
-    prompt = "..." # Prompt would be here
-    placeholder = {
-        "purpose": "Customer is calling to inquire about a recent billing discrepancy.",
-        "category": "Complaint",
-        "summary": "The customer contacted us regarding an unexpected charge on their August bill. The agent investigated the charge and explained the reason.",
-        "call_phases": {
-            "opening": "00:00-00:15",
-            "verification": "00:16-00:45",
-            "problem_identification": "00:46-02:10",
-            "resolution": "02:11-05:30",
-            "closing": "05:31-06:00"
-        }
-    }
-    return call_ai_engine(prompt, selected_model, placeholder)
+    """
+    Performs the first pass analysis to get summary, category, and call phases.
+    """
+    prompt = f"""
+    You are a conversation analyst. Your task is to analyze the provided transcript and return a JSON object.
+    The JSON object must contain:
+    1. "purpose": A one-sentence summary of why the customer is calling.
+    2. "category": Classify the call into one of: 'Query', 'Complaint', 'Follow-up', 'Escalation', 'Sales'.
+    3. "summary": A three-sentence summary of the entire call from start to finish.
+    4. "call_phases": Identify the start and end timestamps for each phase: 'opening', 'verification', 'problem_identification', 'resolution', 'closing'.
 
+    Transcript:
+    ---
+    {transcript}
+    ---
+    Return ONLY the JSON object.
+    """
+    return call_ai_engine(prompt, selected_model)
+
+@st.cache_data(show_spinner="Analyzing business outcome...")
 def run_business_outcome_analysis(transcript: str, selected_model: str) -> dict:
-    prompt = "..."
-    placeholder = {
-        "business_outcome": {
-            "outcome": "Issue_Resolved_First_Call",
-            "justification": "The agent successfully explained the billing charge and the customer accepted the explanation."
-        },
-        "compliance_adherence": True,
-        "risk_identified": {
-            "risk": False,
-            "quote": None
-        }
-    }
-    return call_ai_engine(prompt, selected_model, placeholder)
+    """
+    Determines the final business outcome and checks for compliance/risk.
+    """
+    compliance_statement = "Thank you for calling [Company]. Have a great day."
+    
+    prompt = f"""
+    You are a business analyst. Analyze the provided transcript and return a JSON object.
+    The JSON object must contain:
+    1. "business_outcome": Classify the final outcome as one of: 'Sale_Completed', 'Customer_Retained', 'Issue_Resolved_First_Call', 'Escalation_Required', 'Follow-up_Promised', 'Customer_Churn_Risk', 'No_Resolution'. Provide a brief justification.
+    2. "compliance_adherence": A boolean (true/false) indicating if the agent recited the mandatory statement: '{compliance_statement}'.
+    3. "risk_identified": A boolean (true/false) indicating if any legal or reputational risks were mentioned. If true, provide the quote.
 
+    Transcript:
+    ---
+    {transcript}
+    ---
+    Return ONLY the JSON object.
+    """
+    return call_ai_engine(prompt, selected_model)
+
+@st.cache_data(show_spinner="Scoring parameter: {parameter_name}...")
 def score_single_parameter(transcript: str, parameter_name: str, anchors: str, selected_model: str) -> dict:
-    prompt = "..."
-    # This placeholder simulates the rich evidence sequence
-    placeholder = {
-        "score": 85 if "Greetings" in parameter_name else 78,
-        "justification": f"The agent's performance on {parameter_name} was good, meeting most criteria from the anchors.",
-        "primary_evidence": "Thank you for calling, this is John. How can I assist you today?",
-        "context_before": "Ringing...",
-        "context_after": "Hi John, I have a question about my bill.",
-        "coaching_opportunity": "To get a perfect score, remember to also state the company name in the greeting."
-    }
-    return call_ai_engine(prompt, selected_model, placeholder)
+    """
+    Scores a single, specific parameter based on a transcript and behavioral anchors.
+    """
+    prompt = f"""
+    You are a meticulous QA Analyst. Your only task is to score the parameter '{parameter_name}' on a scale of 0-100 based on the provided transcript.
+    Use the following behavioral anchors to determine your score:
+    {anchors}
+
+    After determining the score, you MUST provide a detailed `evidence_sequence` in JSON format. The sequence must include:
+    - "score": The numeric score from 0-100.
+    - "justification": Your reasoning for the score, referencing the behavioral anchors.
+    - "primary_evidence": The single best quote from the transcript that justifies your score.
+    - "context_before": The dialogue from the 30 seconds immediately preceding the primary evidence.
+    - "context_after": The dialogue from the 30 seconds immediately following the primary evidence.
+    - "coaching_opportunity": A specific, actionable recommendation for the agent based on this interaction.
+
+    Transcript:
+    ---
+    {transcript}
+    ---
+    Return ONLY the JSON object with the evidence sequence.
+    """
+    return call_ai_engine(prompt, selected_model)
