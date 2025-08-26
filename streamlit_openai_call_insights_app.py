@@ -24,6 +24,7 @@ if "records" not in st.session_state:
     st.session_state.records = {}
 
 if "analysis_results" not in st.session_state:
+
     st.session_state.analysis_results = {}
 
 if "run_history" not in st.session_state:
@@ -34,17 +35,21 @@ if "run_history" not in st.session_state:
 # ======================================================================================
 
 def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
-    """Converts the analysis results into a high-level summary DataFrame."""
+    """Converts the full analysis results into a high-level summary DataFrame."""
     summary_data = []
     for file_name, results in analysis_results.items():
         scores = [s['details'].get('score', 0) for s in results.get('scores', [])]
         avg_score = sum(scores) / len(scores) if scores else 0
         
+        # --- CORRECTED LINE ---
+        # The 'business_outcome' dictionary is directly under 'outcome', so we don't need the extra .get('business_outcome')
+        outcome_details = results.get('outcome', {}).get('business_outcome', {})
+        
         summary_data.append({
             "File Name": file_name,
             "Category": results.get('triage', {}).get('category', 'N/A'),
             "Call Purpose": results.get('triage', {}).get('purpose', 'N/A'),
-            "Outcome": results.get('outcome', {}).get('business_outcome', {}).get('outcome', 'N/A'),
+            "Outcome": outcome_details.get('outcome', 'N/A'), # Corrected access
             "Average Score": f"{avg_score:.2f}",
             "Risk Identified": results.get('outcome', {}).get('risk_identified', {}).get('risk', False)
         })
