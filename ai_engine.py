@@ -3,35 +3,49 @@ import streamlit as st
 from openai import OpenAI
 import google.generativeai as genai
 
-# --- API Client Setup ---
+# ======================================================================================
+# API CLIENT SETUP & CONFIGURATION
+# ======================================================================================
+
+# Load API keys from Streamlit secrets
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 
+# Define the available AI models for selection
 AVAILABLE_MODELS = {
     "GPT-4o (OpenAI)": "gpt-4o",
     "Gemini 1.5 Pro (Google)": "gemini-1.5-pro"
 }
 
-# --- Helper Functions ---
+# ======================================================================================
+# HELPER FUNCTIONS
+# ======================================================================================
+
 def _json_guard(text_response: str) -> dict:
-    """Ensures the AI response is a valid JSON object."""
+    """
+    Safely parses a JSON string from an AI response, even if it's embedded in markdown.
+    """
     try:
+        # Find the start and end of the JSON object
         start = text_response.find('{')
         end = text_response.rfind('}')
         if start != -1 and end != -1:
             return json.loads(text_response[start:end+1])
     except (json.JSONDecodeError, IndexError):
+        # Return a structured error if parsing fails
         return {"error": "Failed to parse AI response as JSON.", "raw_response": text_response}
     return {"error": "No valid JSON object found in the response.", "raw_response": text_response}
 
 def call_ai_engine(prompt: str, selected_model: str) -> dict:
     """
     Calls the selected AI engine (GPT or Gemini) with a given prompt
-    and returns a structured dictionary.
+    and returns a structured dictionary. Includes error handling.
     """
     try:
         if "Gemini" in selected_model:
-            if not GEMINI_API_KEY: return {"error": "Gemini API key is not configured."}
+            if not GEMINI_API_KEY:
+                return {"error": "Gemini API key is not configured."}
+            # Configure and call the Gemini API
             genai.configure(api_key=GEMINI_API_KEY)
             model = genai.GenerativeModel(
                 AVAILABLE_MODELS[selected_model],
@@ -41,7 +55,9 @@ def call_ai_engine(prompt: str, selected_model: str) -> dict:
             return _json_guard(response.text)
             
         elif "GPT" in selected_model:
-            if not OPENAI_API_KEY: return {"error": "OpenAI API key is not configured."}
+            if not OPENAI_API_KEY:
+                return {"error": "OpenAI API key is not configured."}
+            # Configure and call the OpenAI API
             client = OpenAI(api_key=OPENAI_API_KEY)
             response = client.chat.completions.create(
                 model=AVAILABLE_MODELS[selected_model],
@@ -53,10 +69,13 @@ def call_ai_engine(prompt: str, selected_model: str) -> dict:
         else:
             return {"error": "Invalid model selected."}
     except Exception as e:
-        st.error(f"Error calling AI engine: {e}")
+        # Catch any API or other errors during the call
+        st.error(f"An error occurred while calling the AI engine: {e}")
         return {"error": str(e)}
 
-# --- Core Analysis Functions ---
+# ======================================================================================
+# CORE ANALYSIS FUNCTIONS
+# ======================================================================================
 
 @st.cache_data(show_spinner="Running initial triage...")
 def run_initial_triage(transcript: str, selected_model: str) -> dict:
@@ -69,7 +88,6 @@ def run_initial_triage(transcript: str, selected_model: str) -> dict:
     1. "purpose": A one-sentence summary of why the customer is calling.
     2. "category": Classify the call into one of: 'Query', 'Complaint', 'Follow-up', 'Escalation', 'Sales'.
     3. "summary": A three-sentence summary of the entire call from start to finish.
-    4. "call_phases": Identify the start and end timestamps for each phase: 'opening', 'verification', 'problem_identification', 'resolution', 'closing'.
 
     Transcript:
     ---
@@ -84,6 +102,7 @@ def run_business_outcome_analysis(transcript: str, selected_model: str) -> dict:
     """
     Determines the final business outcome and checks for compliance/risk.
     """
+    # In a real app, this compliance statement would be a configurable variable
     compliance_statement = "Thank you for calling [Company]. Have a great day."
     
     prompt = f"""
