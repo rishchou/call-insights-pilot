@@ -42,16 +42,27 @@ def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
         scores = [s['details'].get('score', 0) for s in results.get('scores', [])]
         avg_score = sum(scores) / len(scores) if scores else 0
         
+        # Safe outcome extraction
+        def get_outcome_safely(results):
+            outcome = results.get('outcome')
+            if outcome is None:
+                return 'N/A'
+            elif isinstance(outcome, str):
+                return outcome
+            elif isinstance(outcome, dict):
+                business_outcome = outcome.get('business_outcome')
+                if isinstance(business_outcome, dict):
+                    return business_outcome.get('outcome', 'N/A')
+                else:
+                    return outcome.get('outcome', 'N/A')
+            else:
+                return 'N/A'
+        
         summary_data.append({
             "File Name": file_name,
             "Category": results.get('triage', {}).get('category', 'N/A'),
             "Call Purpose": results.get('triage', {}).get('purpose', 'N/A'),
-   "Outcome": (
-    results.get('outcome', {}).get('business_outcome', {}).get('outcome', 'N/A')
-    if isinstance(results.get('outcome'), dict)
-    else results.get('outcome') if isinstance(results.get('outcome'), str)
-    else 'N/A'
-),
+            "Outcome": get_outcome_safely(results),
             "Average Score": f"{avg_score:.2f}",
             "Risk Identified": results.get('outcome', {}).get('risk_identified', {}).get('risk', False)
         })
