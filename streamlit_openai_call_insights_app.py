@@ -41,26 +41,34 @@ if "run_history" not in st.session_state:
 # ======================================================================================
 
 def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
-    """Converts analysis results from a live run or history into a summary DataFrame."""
+    """
+    Converts analysis results from a live run or history into a summary DataFrame.
+    This version safely handles nested data structures.
+    """
     summary_data = []
-    call_results = analysis_results.get('results', analysis_results)
     
+    # The structure can be different if it's from history, so we check for the file list
+    call_results = analysis_results.get('results', analysis_results)
+
     for file_name, results in call_results.items():
         scores = [s['details'].get('score', 0) for s in results.get('scores', [])]
         avg_score = sum(scores) / len(scores) if scores else 0
         
         triage_info = results.get('triage', {})
         outcome_info = results.get('outcome', {})
-        business_outcome_info = outcome_info.get('business_outcome', {})
-        risk_info = outcome_info.get('risk_identified', {})
+        
+        # --- CORRECTED LOGIC ---
+        # Safely access the nested business_outcome dictionary
+        business_outcome_info = outcome_info.get('business_outcome', {}) if outcome_info else {}
+        risk_info = outcome_info.get('risk_identified', {}) if outcome_info else {}
         
         summary_data.append({
             "File Name": file_name,
             "Category": triage_info.get('category', 'N/A'),
             "Call Purpose": triage_info.get('purpose', 'N/A'),
-            "Outcome": business_outcome_info.get('outcome', 'N/A'),
+            "Outcome": business_outcome_info.get('outcome', 'N/A') if business_outcome_info else 'N/A',
             "Average Score": f"{avg_score:.2f}",
-            "Risk Identified": risk_info.get('risk', False)
+            "Risk Identified": risk_info.get('risk', False) if risk_info else False
         })
     return pd.DataFrame(summary_data)
 
