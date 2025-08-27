@@ -58,16 +58,25 @@ def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
             else:
                 return 'N/A'
         
+        # Safe risk identification extraction
+        def get_risk_safely(results):
+            outcome = results.get('outcome')
+            if isinstance(outcome, dict):
+                risk_identified = outcome.get('risk_identified')
+                if isinstance(risk_identified, dict):
+                    return risk_identified.get('risk', False)
+                else:
+                    return False
+            else:
+                return False
+        
         summary_data.append({
             "File Name": file_name,
             "Category": results.get('triage', {}).get('category', 'N/A'),
             "Call Purpose": results.get('triage', {}).get('purpose', 'N/A'),
             "Outcome": get_outcome_safely(results),
             "Average Score": f"{avg_score:.2f}",
-            "Risk Identified": (
-    results.get('outcome', {}).get('risk_identified', {}).get('risk', False)
-    if isinstance(results.get('outcome'), dict)
-    else False)
+            "Risk Identified": get_risk_safely(results)
         })
     return pd.DataFrame(summary_data)
 
