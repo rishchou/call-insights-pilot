@@ -46,7 +46,9 @@ def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
             "File Name": file_name,
             "Category": results.get('triage', {}).get('category', 'N/A'),
             "Call Purpose": results.get('triage', {}).get('purpose', 'N/A'),
-            "Outcome": results.get('outcome', {}).get('business_outcome', {}).get('outcome', 'N/A'),
+            "Outcome": (
+    results.get('outcome', {}).get('business_outcome', {}).get('outcome', 'N/A')
+    if isinstance(results.get('outcome', {}), dict) else 'N/A'),
             "Average Score": f"{avg_score:.2f}",
             "Risk Identified": results.get('outcome', {}).get('risk_identified', {}).get('risk', False)
         })
