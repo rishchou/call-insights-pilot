@@ -64,7 +64,10 @@ def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
             "Call Purpose": results.get('triage', {}).get('purpose', 'N/A'),
             "Outcome": get_outcome_safely(results),
             "Average Score": f"{avg_score:.2f}",
-            "Risk Identified": results.get('outcome', {}).get('risk_identified', {}).get('risk', False)
+            "Risk Identified": (
+    results.get('outcome', {}).get('risk_identified', {}).get('risk', False)
+    if isinstance(results.get('outcome'), dict)
+    else False)
         })
     return pd.DataFrame(summary_data)
 
