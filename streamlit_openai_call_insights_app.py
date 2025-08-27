@@ -35,23 +35,31 @@ if "run_history" not in st.session_state:
 # ======================================================================================
 
 def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
-    """Converts the full analysis results into a high-level summary DataFrame."""
+    """
+    Converts analysis results from a live run or history into a summary DataFrame.
+    This version safely handles nested data structures.
+    """
     summary_data = []
-    for file_name, results in analysis_results.items():
+    
+    # The structure can be different if it's from history, so we check for the file list
+    call_results = analysis_results.get('results', analysis_results)
+
+    for file_name, results in call_results.items():
         scores = [s['details'].get('score', 0) for s in results.get('scores', [])]
         avg_score = sum(scores) / len(scores) if scores else 0
         
-        # --- CORRECTED LINE ---
-        # The 'business_outcome' dictionary is directly under 'outcome', so we don't need the extra .get('business_outcome')
-        outcome_details = results.get('outcome', {}).get('business_outcome', {})
+        triage_info = results.get('triage', {})
+        outcome_info = results.get('outcome', {})
+        business_outcome_info = outcome_info.get('business_outcome', {})
+        risk_info = outcome_info.get('risk_identified', {})
         
         summary_data.append({
             "File Name": file_name,
-            "Category": results.get('triage', {}).get('category', 'N/A'),
-            "Call Purpose": results.get('triage', {}).get('purpose', 'N/A'),
-            "Outcome": outcome_details.get('outcome', 'N/A'), # Corrected access
+            "Category": triage_info.get('category', 'N/A'),
+            "Call Purpose": triage_info.get('purpose', 'N/A'),
+            "Outcome": business_outcome_info.get('outcome', 'N/A'),
             "Average Score": f"{avg_score:.2f}",
-            "Risk Identified": results.get('outcome', {}).get('risk_identified', {}).get('risk', False)
+            "Risk Identified": risk_info.get('risk', False)
         })
     return pd.DataFrame(summary_data)
 
