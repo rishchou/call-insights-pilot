@@ -2,11 +2,12 @@
 import pandas as pd
 import streamlit as st
 from typing import Dict, List
+import html  # ✅ for safe escaping in the HTML table
 
 # Your modules
 import audio_processing
 import ai_engine
-import exports  # <-- the helper we added for CSV building
+import exports  # CSV helpers
 
 # =============================================================================
 # PAGE CONFIG & LIGHT POLISH
@@ -104,13 +105,12 @@ def cleanup_failed_uploads():
     if failed:
         st.warning(f"Removed {len(failed)} failed uploads: {', '.join(failed)}")
 
-# ---- Dashboard helpers made robust to handle both legacy and A/B result shapes
+# ---- Dashboard helpers (support A/B structure and legacy)
 
 def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
     summary_data = []
 
     def compute_avg_from_ab(ab_result: dict, variant: str = "A") -> float:
-        # Try to average parameter scores from stages.parameter_scores[variant]
         try:
             stages = {s.get("name"): s for s in ab_result.get("stages", [])}
             params = (stages.get("parameter_scores", {}) or {}).get(variant, {}) or {}
@@ -120,7 +120,6 @@ def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
             return 0.0
 
     for file_name, bundle in analysis_results.items():
-        # Prefer A/B structure if available
         ab = bundle.get("ab_result")
         triage, outcome, avg_score = {}, {}, 0.0
 
@@ -132,7 +131,6 @@ def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
             outcome = outcome_map.get("A", {}) or outcome_map.get("B", {}) or {}
             avg_score = compute_avg_from_ab(ab, "A") or compute_avg_from_ab(ab, "B")
         else:
-            # Legacy shape support (triage/outcome at top-level + scores list)
             results = bundle
             triage = results.get('triage', {}) if isinstance(results, dict) else {}
             outcome = results.get('outcome', {}) if isinstance(results, dict) else {}
@@ -235,30 +233,36 @@ def _run_analysis_for_files(file_list, depth, rubric):
             "results": all_results.copy()
         })
         st.success("✅ Analysis complete!")
+        # ✅ clearer feedback: list files analyzed
+        st.write("Analyzed files:")
+        for f in file_list:
+            st.write(f"- {f}")
 
 def _render_ab_exports_buttons():
     import exports
     dfs_A, dfs_B = [], []
-    file_keys = [k for k,v in st.session_state.analysis_results.items() if v.get("ab_result")]
-    if not file_keys:
-        st.info("No A/B-structured results yet. Run analysis above.")
-        return
+    file_keys = [k for k, v in st.session_state.analysis_results.items() if v.get("ab_result")]
+    run_ts = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+
+    # Preferred: A/B exports
     for fname in file_keys:
         bundle = st.session_state.analysis_results[fname]
         ab = bundle.get("ab_result")
         tdata = bundle.get("transcript_data") or {}
         try:
             dfA = exports.build_variant_dataframe(fname, ab, tdata, "A")
-            if not dfA.empty: dfs_A.append(dfA)
+            if not dfA.empty:
+                dfs_A.append(dfA)
         except Exception as e:
             st.warning(f"CSV build failed for {fname} (A): {e}")
         try:
             dfB = exports.build_variant_dataframe(fname, ab, tdata, "B")
-            if not dfB.empty: dfs_B.append(dfB)
+            if not dfB.empty:
+                dfs_B.append(dfB)
         except Exception as e:
             st.warning(f"CSV build failed for {fname} (B): {e}")
 
-    run_ts = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+    # Buttons for A/B (if any)
     csvA_bytes = pd.concat(dfs_A).to_csv(index=False).encode("utf-8") if dfs_A else b""
     csvB_bytes = pd.concat(dfs_B).to_csv(index=False).encode("utf-8") if dfs_B else b""
 
@@ -282,6 +286,45 @@ def _render_ab_exports_buttons():
             use_container_width=True
         )
 
+    # ✅ Legacy fallback: if there were no A/B rows at all, offer a simple legacy CSV
+    if (not dfs_A) and (not dfs_B):
+        legacy_rows = []
+        for fname, bundle in st.session_state.analysis_results.items():
+            legacy = bundle.get("legacy_result")
+            if not isinstance(legacy, dict):
+                continue
+            triage = legacy.get("triage", {}) or {}
+            outc = legacy.get("outcome", {}) or {}
+            scores = legacy.get("scores", []) or []
+            for s in scores:
+                d = s.get("details", {}) or {}
+                if "score" not in d:
+                    continue
+                legacy_rows.append({
+                    "AuditTimestamp": pd.Timestamp.now().isoformat(),
+                    "CallID": fname,
+                    "FileName": fname,
+                    "Variant": "A",
+                    "Parameter": s.get("parameter"),
+                    "Score": d.get("score"),
+                    "Confidence": d.get("confidence", ""),
+                    "Justification": d.get("justification", ""),
+                    "PrimaryEvidence": d.get("primary_evidence", ""),
+                    "CoachingOpportunity": d.get("coaching_opportunity", ""),
+                    "Outcome": outc.get("business_outcome") if isinstance(outc, dict) else outc,
+                    "Category": triage.get("category", ""),
+                    "CallPurpose": triage.get("purpose", ""),
+                })
+        if legacy_rows:
+            legacy_df = pd.DataFrame(legacy_rows)
+            csv_legacy = legacy_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "⬇️ Download Legacy CSV",
+                data=csv_legacy,
+                file_name=f"results_legacy_{run_ts}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
 
 # =============================================================================
 # UI PAGES
@@ -363,7 +406,16 @@ def page_call_analysis():
                 dur = tr.get("duration", 0)
                 lang = tr.get("detected_language", "Unknown")
                 spk = len(set(s.get("speaker","?") for s in tr.get("segments", []) or []))
-                table_rows.append([filename, f"{meta.get('size_mb',0):.1f} MB", f"{dur:.1f}s" if dur else "—", lang, spk, status_html])
+                # ✅ Escape filename/lang; keep badge raw
+                safe_name = html.escape(filename)
+                table_rows.append([
+                    safe_name,
+                    f"{meta.get('size_mb',0):.1f} MB",
+                    f"{dur:.1f}s" if dur else "—",
+                    html.escape(lang),
+                    spk,
+                    status_html
+                ])
 
             df = pd.DataFrame(table_rows, columns=["File","Size","Duration","Language","Speakers","#Status"])
             st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
@@ -426,7 +478,7 @@ def page_call_analysis():
                         else:
                             st.write(tdata.get("english_transcript", "No transcript available."))
 
-        # per-row Analyze buttons (quick actions)
+        # per-row Analyze buttons (quick actions) — ✅ only for ready files
         st.markdown("---")
         st.markdown("**Quick Analyze (single file)**")
         for fname in ready:
@@ -476,10 +528,10 @@ def page_dashboard():
         st.dataframe(summary_df, use_container_width=True)
         col1, col2, col3, col4 = st.columns(4)
         with col1:
+            # ✅ safer numeric conversion
             try:
-                avg_scores = [float(x) for x in summary_df['Average Score'].replace('N/A', '0')]
-                valid = [x for x in avg_scores if x > 0]
-                overall_avg = sum(valid) / len(valid) if valid else 0
+                s = pd.to_numeric(summary_df['Average Score'].replace('N/A', None), errors='coerce').dropna()
+                overall_avg = float(s.mean()) if not s.empty else 0.0
                 st.metric("Overall Average Score", f"{overall_avg:.1f}")
             except Exception:
                 st.metric("Overall Average Score", "N/A")
@@ -494,7 +546,7 @@ def page_dashboard():
 
     with tab2:
         df_chart = summary_df.copy()
-        df_chart['Average Score'] = pd.to_numeric(df_chart['Average Score'].replace('N/A', '0'))
+        df_chart['Average Score'] = pd.to_numeric(df_chart['Average Score'].replace('N/A', '0'), errors='coerce')
         df_chart = df_chart[df_chart['Average Score'] > 0]
         if not df_chart.empty:
             st.markdown("**Average Scores by File**")
@@ -529,7 +581,6 @@ def page_dashboard():
 def page_rubric_editor():
     st.title("📝 Rubric Editor")
     st.info("Rubric creation and editing UI (coming soon).")
-    # You can list available custom rubrics for now:
     rubrics = list(getattr(ai_engine, "CUSTOM_PARAMETERS", {}).keys())
     if rubrics:
         st.markdown("**Available Custom Rubrics:**")
@@ -547,13 +598,16 @@ def page_run_history():
     for i, run in enumerate(reversed(st.session_state.run_history)):
         run_number = len(st.session_state.run_history) - i
         with st.expander(f"Run #{run_number}: {run['run_id']} — {run.get('depth','Unknown')} ({run['files_analyzed']} files)"):
+
             c1, c2, c3 = st.columns(3)
             with c1: st.metric("Files Analyzed", run['files_analyzed'])
             with c2: st.metric("Analysis Depth", run.get('depth', 'Unknown'))
             with c3: st.metric("Rubric Used", run.get('custom_rubric') or 'Standard')
+
             files_analyzed = run.get('files', [])
             if files_analyzed:
                 st.markdown("**Files:** " + ", ".join(files_analyzed))
+
             run_results = run.get('results', {})
             if run_results:
                 st.markdown("**Summary of this run:**")
