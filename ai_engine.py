@@ -1,186 +1,443 @@
+# ai_engine.py — A/B anonymized dual-model engine for call QA (Streamlit-friendly, UI-agnostic)
+
+import json
+import time
+import statistics
+import random
+import uuid
+import re
+import logging
+from typing import Dict, List, Optional, Tuple
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import streamlit as st
+from openai import OpenAI
+import google.generativeai as genai
+
+
 # ======================================================================================
-# PROMPT GENERATION FUNCTIONS
+# API CLIENT SETUP & CONFIGURATION
 # ======================================================================================
 
-def _get_triage_prompt(transcript: str) -> str:
-    """Generate triage analysis prompt"""
+def validate_api_keys() -> Tuple[bool, bool]:
+    """Validate API keys are available from st.secrets."""
+    openai_key = st.secrets.get("OPENAI_API_KEY")
+    gemini_key = st.secrets.get("GEMINI_API_KEY")
+    return bool(openai_key), bool(gemini_key)
+
+
+@lru_cache(maxsize=1)
+def get_openai_client() -> OpenAI:
+    """Cached OpenAI client."""
+    api_key = st.secrets.get("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OpenAI API key not configured")
+    return OpenAI(api_key=api_key)
+
+
+@lru_cache(maxsize=1)
+def get_gemini_client():
+    """Cached Gemini model object (GenerativeModel)."""
+    api_key = st.secrets.get("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("Gemini API key not configured")
+    genai.configure(api_key=api_key)
+    # Force JSON MIME type to reduce parsing errors
+    return genai.GenerativeModel(
+        "gemini-1.5-pro",
+        generation_config={"temperature": 0.2, "response_mime_type": "application/json"},
+    )
+
+
+# ======================================================================================
+# PARAMETER CONFIGURATIONS
+# ======================================================================================
+
+ANALYSIS_PARAMETERS = {
+    "Quick Scan": [
+        {"name": "greeting", "weight": 15, "anchors": "90-100: Professional greeting with company name, agent name, and polite inquiry. 70-89: Good greeting with most elements present. 50-69: Basic greeting missing some elements. 30-49: Poor greeting, unprofessional. 0-29: No proper greeting."},
+        {"name": "empathy", "weight": 20, "anchors": "90-100: Shows genuine understanding and concern for customer's situation. 70-89: Demonstrates good empathy with appropriate responses. 50-69: Shows some empathy but could be more genuine. 30-49: Limited empathy shown. 0-29: No empathy demonstrated."},
+        {"name": "resolution", "weight": 30, "anchors": "90-100: Completely resolves customer issue with clear solution. 70-89: Good resolution with minor gaps. 50-69: Partial resolution provided. 30-49: Minimal resolution attempts. 0-29: No resolution provided."},
+    ],
+    "Standard Analysis": [
+        {"name": "greeting", "weight": 10, "anchors": "90-100: Professional greeting with company name, agent name, and polite inquiry. 70-89: Good greeting with most elements present. 50-69: Basic greeting missing some elements. 30-49: Poor greeting, unprofessional. 0-29: No proper greeting."},
+        {"name": "empathy", "weight": 15, "anchors": "90-100: Shows genuine understanding and concern for customer's situation. 70-89: Demonstrates good empathy with appropriate responses. 50-69: Shows some empathy but could be more genuine. 30-49: Limited empathy shown. 0-29: No empathy demonstrated."},
+        {"name": "resolution", "weight": 25, "anchors": "90-100: Completely resolves customer issue with clear solution. 70-89: Good resolution with minor gaps. 50-69: Partial resolution provided. 30-49: Minimal resolution attempts. 0-29: No resolution provided."},
+        {"name": "compliance", "weight": 20, "anchors": "90-100: Follows all compliance requirements including mandatory statements. 70-89: Good compliance with minor gaps. 50-69: Some compliance issues noted. 30-49: Multiple compliance violations. 0-29: Major compliance failures."},
+        {"name": "professionalism", "weight": 15, "anchors": "90-100: Maintains professional tone throughout, uses appropriate language. 70-89: Generally professional with minor lapses. 50-69: Somewhat professional but inconsistent. 30-49: Limited professionalism. 0-29: Unprofessional behavior."},
+        {"name": "communication_clarity", "weight": 15, "anchors": "90-100: Clear, concise communication that's easy to understand. 70-89: Generally clear with minor confusion. 50-69: Somewhat clear but could be improved. 30-49: Often unclear or confusing. 0-29: Very poor communication."},
+    ],
+    "Deep Dive": [
+        {"name": "greeting", "weight": 8, "anchors": "90-100: Professional greeting with company name, agent name, and polite inquiry. 70-89: Good greeting with most elements present. 50-69: Basic greeting missing some elements. 30-49: Poor greeting, unprofessional. 0-29: No proper greeting."},
+        {"name": "empathy", "weight": 12, "anchors": "90-100: Shows genuine understanding and concern for customer's situation. 70-89: Demonstrates good empathy with appropriate responses. 50-69: Shows some empathy but could be more genuine. 30-49: Limited empathy shown. 0-29: No empathy demonstrated."},
+        {"name": "resolution", "weight": 20, "anchors": "90-100: Completely resolves customer issue with clear solution. 70-89: Good resolution with minor gaps. 50-69: Partial resolution provided. 30-49: Minimal resolution attempts. 0-29: No resolution provided."},
+        {"name": "compliance", "weight": 15, "anchors": "90-100: Follows all compliance requirements including mandatory statements at proper times during call. Agent must verify customer identity before sharing financial information, provide required disclosures, and use exact compliance language. 70-89: Good compliance with minor gaps. 50-69: Some compliance issues noted. 30-49: Multiple compliance violations. 0-29: Major compliance failures."},
+        {"name": "professionalism", "weight": 12, "anchors": "90-100: Maintains professional tone throughout, uses appropriate language. 70-89: Generally professional with minor lapses. 50-69: Somewhat professional but inconsistent. 30-49: Limited professionalism. 0-29: Unprofessional behavior."},
+        {"name": "active_listening", "weight": 10, "anchors": "90-100: Demonstrates excellent active listening with appropriate responses and clarifying questions. 70-89: Good listening skills shown. 50-69: Some listening but misses cues. 30-49: Poor listening skills. 0-29: No evidence of active listening."},
+        {"name": "product_knowledge", "weight": 13, "anchors": "90-100: Expert knowledge of products/services with accurate information. 70-89: Good product knowledge with minor gaps. 50-69: Basic knowledge but some inaccuracies. 30-49: Limited product knowledge. 0-29: Poor or incorrect product knowledge."},
+        {"name": "call_control", "weight": 10, "anchors": "90-100: Maintains excellent control of call flow, manages time effectively. 70-89: Good call control with minor issues. 50-69: Some call control but could be better. 30-49: Poor call control, loses direction. 0-29: No call control, chaotic flow."},
+    ],
+}
+
+# Custom Parameters Storage (can be moved to DB later)
+CUSTOM_PARAMETERS = {
+    "Sales Outbound": [
+        {"name": "emi_offer", "weight": 15, "custom": True, "anchors": "90-100: Proactively offered 0% EMI when applicable and customer showed interest in higher-priced options. 70-89: Offered EMI when customer asked or showed price sensitivity. 50-69: Mentioned EMI options briefly during price discussion. 30-49: Failed to offer EMI when clear opportunity existed. 0-29: No EMI discussion despite clear opportunity."},
+        {"name": "urgency_creation", "weight": 20, "custom": True, "anchors": "90-100: Genuine urgency with limited-time offer/availability. 70-89: Some urgency with promotions. 50-69: Mild attempts. 30-49: Weak urgency. 0-29: No urgency created."},
+        {"name": "objection_handling", "weight": 25, "custom": True, "anchors": "90-100: Expertly handled objections with relevant solutions. 70-89: Good handling. 50-69: Basic handling. 30-49: Poor handling. 0-29: Failed to address objections."},
+    ],
+    "Banking Support": [
+        {"name": "identity_verification", "weight": 25, "custom": True, "anchors": "90-100: Verified identity with multiple factors before sharing details. 70-89: Good verification. 50-69: Basic verification. 30-49: Insufficient verification. 0-29: No verification before sharing sensitive info."},
+        {"name": "data_protection", "weight": 20, "custom": True, "anchors": "90-100: Excellent data protection; no full numbers spoken; secure channels. 70-89: Good protection. 50-69: Adequate but some verbal sharing. 30-49: Concerns. 0-29: Poor practices."},
+        {"name": "regulatory_compliance", "weight": 15, "custom": True, "anchors": "90-100: Perfect disclosures, consent captured. 70-89: Good compliance. 50-69: Most requirements met. 30-49: Some issues. 0-29: Multiple violations."},
+    ],
+    "Technical Support": [
+        {"name": "troubleshooting_methodology", "weight": 30, "custom": True, "anchors": "90-100: Systematic approach; info gathered; step-by-step tests. 70-89: Good approach. 50-69: Basic, skipped steps. 30-49: Poor approach. 0-29: No methodology."},
+        {"name": "technical_accuracy", "weight": 25, "custom": True, "anchors": "90-100: Completely accurate guidance. 70-89: Mostly accurate. 50-69: Some questionable advice. 30-49: Several inaccuracies. 0-29: Incorrect/harmful info."},
+    ],
+}
+
+
+# ======================================================================================
+# HELPERS: SANITIZATION & JSON PARSING
+# ======================================================================================
+
+def sanitize_transcript(transcript: str, max_length: int = 50000) -> str:
+    """Sanitize basic PII and truncate very long transcripts."""
+    if not transcript:
+        return ""
+    # Basic PII patterns (expand as needed for your markets)
+    transcript = re.sub(r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b', '[CARD_NUMBER_REDACTED]', transcript)  # card
+    transcript = re.sub(r'\b\d{3}-?\d{2}-?\d{4}\b', '[SSN_REDACTED]', transcript)  # SSN
+    transcript = re.sub(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '[EMAIL_REDACTED]', transcript)
+    transcript = re.sub(r'\b(\+?\d[\d\s-]{8,})\b', '[PHONE_REDACTED]', transcript)  # phone-ish
+    transcript = re.sub(r'\b\d{4,6}\b', '[OTP_REDACTED]', transcript)  # OTP length
+    transcript = re.sub(r'\b\d{3}\b', '[CVV_REDACTED]', transcript)  # CVV length
+    if len(transcript) > max_length:
+        transcript = transcript[:max_length] + "\n...[TRANSCRIPT_TRUNCATED]"
+    return transcript
+
+
+def _json_guard(text_response: str) -> dict:
+    """Safely parse JSON from raw model text (strip junk, code fences, etc.)."""
+    if not text_response or not isinstance(text_response, str):
+        return {"error": "Empty or invalid response", "raw_response": text_response}
+    t = text_response.strip().strip('`')
+    try:
+        # Quick path
+        if t.startswith("{") and t.endswith("}"):
+            return json.loads(t)
+        # Search for JSON object boundaries
+        start = t.find('{'); end = t.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            return json.loads(t[start:end+1])
+    except Exception as e:
+        return {"error": f"JSON parsing failed: {e}", "raw_response": text_response[:1000]}
+    return {"error": "No valid JSON object found in response", "raw_response": text_response[:1000]}
+
+
+# ======================================================================================
+# MODEL CALLS
+# ======================================================================================
+
+def call_ai_engine_single(prompt: str, model_name: str, max_retries: int = 2) -> dict:
+    """Call a single model ('gpt' or 'gemini') with retries and timing."""
+    start_time = time.time()
+    last_err = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            if model_name == "gpt":
+                client = get_openai_client()
+                resp = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                    timeout=30,
+                )
+                result = _json_guard(resp.choices[0].message.content)
+
+            elif model_name == "gemini":
+                model = get_gemini_client()
+                resp = model.generate_content(prompt, request_options={"timeout": 30})
+                result = _json_guard(getattr(resp, "text", "") or "")
+
+            else:
+                result = {"error": f"Unknown model '{model_name}'"}
+
+            result["_performance"] = {
+                "model": model_name,
+                "response_time": round(time.time() - start_time, 2),
+                "attempts": attempt,
+                "success": "error" not in result,
+            }
+            return result
+
+        except Exception as e:
+            last_err = str(e)
+            time.sleep(0.5)  # backoff
+
+    return {
+        "error": f"{model_name} failed after {max_retries} attempts: {last_err}",
+        "_performance": {"model": model_name, "failed": True, "attempts": max_retries, "error": last_err},
+    }
+
+
+def _stash_model_comparison(detailed: dict):
+    """Keep a capped history of model comparisons in session state."""
+    buf = st.session_state.setdefault("_model_comparisons", [])
+    buf.append({"ts": time.time(), "results": detailed})
+    if len(buf) > 50:
+        buf.pop(0)
+
+
+def _create_ab_mapping(openai_ok: bool, gemini_ok: bool) -> Tuple[str, Dict[str, str]]:
+    """
+    Create a randomized A/B mapping for this run.
+    Returns (run_id, {"A": "gpt"/"gemini", "B": "gpt"/"gemini"?}).
+    """
+    run_id = str(uuid.uuid4())[:8]
+    mapping = {}
+    if openai_ok and gemini_ok:
+        pair = ["gpt", "gemini"]
+        random.shuffle(pair)
+        mapping = {"A": pair[0], "B": pair[1]}
+    elif openai_ok:
+        mapping = {"A": "gpt"}
+    elif gemini_ok:
+        mapping = {"A": "gemini"}
+    else:
+        mapping = {}
+    # Persist mapping for admin lookup
+    st.session_state.setdefault("_ab_runs", {})[run_id] = mapping
+    return run_id, mapping
+
+
+def _call_pair_with_mapping(prompt: str, mapping: Dict[str, str], max_retries: int = 2) -> Tuple[Dict[str, dict], dict]:
+    """
+    Call the models specified in mapping in parallel.
+    Returns (results_by_label, perf_summary).
+    """
+    results: Dict[str, dict] = {}
+    perf = {"models_used": [], "total_time": None}
+
+    start = time.time()
+    tasks = {}
+    with ThreadPoolExecutor(max_workers=max(1, len(mapping))) as pool:
+        for label, model_name in mapping.items():
+            tasks[label] = pool.submit(call_ai_engine_single, prompt, model_name, max_retries)
+
+        for label, fut in tasks.items():
+            results[label] = fut.result()
+            model_name = mapping[label]
+            if model_name not in perf["models_used"]:
+                perf["models_used"].append(model_name)
+
+    perf["total_time"] = round(time.time() - start, 2)
+    return results, perf
+
+
+# ======================================================================================
+# PUBLIC API: SINGLE PROMPT (A/B)
+# ======================================================================================
+
+def call_ai_engine(prompt: str, max_retries: int = 2, admin_view: bool = False) -> dict:
+    """
+    Run a single prompt through anonymized A/B:
+      - Users get: {"results": [{"label":"A","result":...}, {"label":"B","result":...}]}
+      - Admin gets (if admin_view=True): + {"admin": {"run_id":..., "mapping": {...}, "performance_summary": {...}}}
+    If only one model is configured, returns just A.
+    """
+    openai_ok, gemini_ok = validate_api_keys()
+    if not (openai_ok or gemini_ok):
+        return {"error": "No API keys configured"}
+
+    clean_prompt = sanitize_transcript(prompt)
+    run_id, mapping = _create_ab_mapping(openai_ok, gemini_ok)
+    results_by_label, perf = _call_pair_with_mapping(clean_prompt, mapping, max_retries)
+
+    # Build user payload
+    items = [{"label": label, "result": results_by_label[label]} for label in ("A", "B") if label in results_by_label]
+    detailed = {m: results_by_label[lbl] for lbl, m in mapping.items()}
+    detailed["performance_summary"] = {"total_time": perf["total_time"], "parallel_execution": True, "models_used": perf["models_used"]}
+
+    _stash_model_comparison(detailed)
+
+    payload = {"results": items}
+    if admin_view:
+        payload["admin"] = {"run_id": run_id, "mapping": mapping, "performance_summary": detailed["performance_summary"]}
+    return payload
+
+
+# ======================================================================================
+# PROMPT GENERATION
+# ======================================================================================
+
+def get_triage_prompt(transcript: str) -> str:
     return f"""
-    You are a conversation analyst. Analyze the provided transcript and return a JSON object.
-    The JSON object must contain:
-    1. "purpose": A one-sentence summary of why the customer is calling.
-    2. "category": Classify the call into one of: 'Query', 'Complaint', 'Follow-up', 'Escalation', 'Sales', 'Support', 'Billing'.
-    3. "summary": A three-sentence summary of the entire call from start to finish.
-    4. "customer_sentiment": Rate customer sentiment from 1-10 (1=very negative, 10=very positive).
-    5. "call_complexity": Rate call complexity from 1-5 (1=simple, 5=very complex).
-    6. "estimated_duration": Estimate call duration in minutes based on content.
+You are an expert conversation analyst. Analyze this call transcript and return a JSON object with exact field names.
 
-    Transcript:
-    ---
-    {transcript}
-    ---
-    Return ONLY the JSON object.
-    """
+Required JSON structure:
+{{
+    "purpose": "Single sentence summary of why customer called",
+    "category": "One of: Query, Complaint, Follow-up, Escalation, Sales, Support, Billing",
+    "summary": "Three-sentence summary covering: call start, main discussion, resolution",
+    "customer_sentiment": "Integer from 1-10 (1=very negative, 10=very positive)",
+    "call_complexity": "Integer from 1-5 (1=simple routine, 5=very complex multi-issue)",
+    "estimated_duration": "Integer estimated minutes based on transcript length and complexity"
+}}
 
-def _get_business_outcome_prompt(transcript: str) -> str:
-    """Generate business outcome analysis prompt"""
-    compliance_statement = "Thank you for calling [Company]. Have a great day."
-    
+Transcript:
+---
+{transcript}
+---
+
+Return ONLY the JSON object with no additional text.
+""".strip()
+
+
+def get_business_outcome_prompt(transcript: str) -> str:
     return f"""
-    You are a business analyst. Analyze the provided transcript and return a JSON object.
-    The JSON object must contain:
-    1. "business_outcome": Classify the final outcome as one of: 'Sale_Completed', 'Customer_Retained', 'Issue_Resolved_First_Call', 'Escalation_Required', 'Follow-up_Promised', 'Customer_Churn_Risk', 'No_Resolution', 'Information_Provided', 'Appointment_Scheduled'.
-    2. "outcome_confidence": Rate confidence in the outcome classification from 1-10.
-    3. "justification": Brief explanation for the business outcome classification.
-    4. "compliance_adherence": Boolean indicating if agent followed compliance requirements.
-    5. "risk_identified": Boolean indicating if any legal or reputational risks were identified.
-    6. "risk_details": If risks identified, provide specific details and quotes.
-    7. "next_steps": What should happen next based on this call.
-    8. "customer_satisfaction_indicator": Rate likely customer satisfaction from 1-10 based on call flow.
+You are a business analyst specializing in call center outcomes. Analyze this transcript and return a JSON object.
 
-    Mandatory compliance check: '{compliance_statement}'
-    
-    Transcript:
-    ---
-    {transcript}
-    ---
-    Return ONLY the JSON object.
-    """
+Required JSON structure:
+{{
+    "business_outcome": "One of: Sale_Completed, Customer_Retained, Issue_Resolved_First_Call, Escalation_Required, Follow-up_Promised, Customer_Churn_Risk, No_Resolution, Information_Provided, Appointment_Scheduled",
+    "outcome_confidence": "Integer from 1-10 indicating confidence in classification",
+    "justification": "Brief explanation for the outcome classification with specific evidence",
+    "compliance_adherence": "Boolean - true if agent followed standard compliance procedures",
+    "compliance_details": "Specific compliance elements observed or missed",
+    "risk_identified": "Boolean indicating if any legal or reputational risks were identified",
+    "risk_details": "If risks identified, provide specific details and exact quotes",
+    "next_steps": "Recommended next actions based on this call outcome",
+    "customer_satisfaction_indicator": "Integer from 1-10 based on customer responses and call resolution"
+}}
 
-def _get_parameter_scoring_prompt(transcript: str, parameter_name: str, anchors: str) -> str:
-    """Generate parameter scoring prompt"""
+Compliance Requirements to Check:
+- Agent must greet professionally with company name
+- Must verify customer identity before sharing account details
+- Must provide required disclosures for financial products
+- Must end with professional closing statement
+
+Transcript:
+---
+{transcript}
+---
+
+Return ONLY the JSON object with no additional text.
+""".strip()
+
+
+def get_parameter_scoring_prompt(transcript: str, parameter_name: str, anchors: str) -> str:
     return f"""
-    You are a meticulous QA Analyst. Score the parameter '{parameter_name}' on a scale of 0-100.
-    
-    Behavioral Anchors:
-    {anchors}
+You are a meticulous QA analyst with expertise in call center quality assessment.
 
-    Return a JSON object with:
-    - "score": Numeric score (0-100)
-    - "confidence": Confidence in score (1-10)
-    - "justification": Detailed reasoning referencing behavioral anchors
-    - "primary_evidence": Best supporting quote from transcript
-    - "context_before": 30 seconds of dialogue before the evidence
-    - "context_after": 30 seconds of dialogue after the evidence
-    - "coaching_opportunity": Specific, actionable coaching recommendation
-    - "improvement_impact": How fixing this would impact customer experience
-    - "severity": If score is low, rate severity of the issue (1-5)
+Score the parameter '{parameter_name}' on a scale of 0-100 using the provided behavioral anchors.
 
-    Transcript:
-    ---
-    {transcript}
-    ---
-    Return ONLY the JSON object.
-    """
+Behavioral Anchors for {parameter_name}:
+{anchors}
 
-# ======================================================================================
-# LEGACY COMPATIBILITY FUNCTIONS (for existing code)
-# ======================================================================================
+Required JSON structure:
+{{
+    "score": "Integer from 0-100 based on behavioral anchors",
+    "confidence": "Integer from 1-10 indicating confidence in this score",
+    "justification": "Detailed reasoning referencing specific behavioral anchors and transcript evidence",
+    "primary_evidence": "Best supporting quote from transcript (max 150 words)",
+    "context_before": "Dialogue context before the evidence (max 100 words)",
+    "context_after": "Dialogue context after the evidence (max 100 words)",
+    "coaching_opportunity": "Specific, actionable coaching recommendation for improvement",
+    "improvement_impact": "How addressing this would impact customer experience",
+    "severity": "If score < 70, rate issue severity from 1-5 (1=minor, 5=critical)"
+}}
 
-@st.cache_data(show_spinner="Running initial triage...")
-def run_initial_triage(transcript: str) -> dict:
-    """
-    Enhanced triage analysis - now uses dual models automatically.
-    """
-    prompt = _get_triage_prompt(transcript)
-    return call_ai_engine(prompt)
+Instructions:
+- Be precise and reference specific anchor ranges
+- Use exact quotes from transcript for evidence
+- Provide actionable coaching, not generic advice
+- If parameter doesn't apply to this call type, score as N/A with explanation
 
-@st.cache_data(show_spinner="Analyzing business outcome...")
-def run_business_outcome_analysis(transcript: str) -> dict:
-    """
-    Enhanced business outcome analysis - now uses dual models automatically.
-    """
-    prompt = _get_business_outcome_prompt(transcript)
-    return call_ai_engine(prompt)
+Transcript:
+---
+{transcript}
+---
 
-@st.cache_data(show_spinner="Scoring parameter...")
-def score_single_parameter(transcript: str, parameter_name: str, anchors: str) -> dict:
-    """
-    Enhanced parameter scoring - now uses dual models automatically.
-    """
-    prompt = _get_parameter_scoring_prompt(transcript, parameter_name, anchors)
-    return call_ai_engine(prompt)
+Return ONLY the JSON object with no additional text.
+""".strip()
+
 
 # ======================================================================================
-# CUSTOM PARAMETER MANAGEMENT
+# UTILS
 # ======================================================================================
 
-def add_custom_parameter(rubric_name: str, parameter: dict):
-    """Add a custom parameter to a rubric"""
-    if rubric_name not in CUSTOM_PARAMETERS:
-        CUSTOM_PARAMETERS[rubric_name] = []
-    
-    CUSTOM_PARAMETERS[rubric_name].append(parameter)
+def _num(x, default=0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return default
 
-def get_available_custom_rubrics():
-    """Get list of available custom rubrics"""
-    return list(CUSTOM_PARAMETERS.keys())
 
-def create_custom_rubric(rubric_name: str, industry: str, parameters: list):
-    """Create a new custom rubric"""
-    CUSTOM_PARAMETERS[rubric_name] = []
-    for param in parameters:
-        param['custom'] = True
-        CUSTOM_PARAMETERS[rubric_name].append(param)
+def get_combined_parameters(depth: str, custom_rubric: Optional[str] = None) -> List[dict]:
+    """Merge standard parameters with optional custom rubric and normalize weights."""
+    standard_params = list(ANALYSIS_PARAMETERS.get(depth, ANALYSIS_PARAMETERS["Standard Analysis"]))
+    custom_params = list(CUSTOM_PARAMETERS.get(custom_rubric, [])) if custom_rubric else []
+    combined = standard_params + custom_params
 
-# ======================================================================================
-# ENHANCED UTILITY FUNCTIONS
-# ======================================================================================
+    total_weight = sum(p.get("weight", 0) for p in combined) or 0
+    if total_weight > 100:
+        for p in combined:
+            p["weight"] = round((p.get("weight", 0) / total_weight) * 100, 1)
+    return combined
+
 
 def calculate_overall_metrics(parameter_scores: dict) -> dict:
-    """
-    Enhanced calculate overall weighted metrics from parameter scores.
-    """
+    """Calculate overall weighted metrics from parameter scores."""
     if not parameter_scores:
         return {"error": "No parameter scores provided"}
-    
-    total_weighted_score = 0
-    total_weight = 0
+
+    total_weighted_score = 0.0
+    total_weight = 0.0
     valid_scores = 0
     low_scores = []
     coaching_opportunities = []
     custom_parameter_performance = {}
-    
+
     for param_name, param_data in parameter_scores.items():
-        if 'error' not in param_data and 'score' in param_data:
-            score = param_data.get('score', 0)
-            weight = param_data.get('weight', 10)  # Default weight
-            is_custom = param_data.get('custom_parameter', False)
-            
+        if isinstance(param_data, dict) and 'error' not in param_data and 'score' in param_data:
+            score = _num(param_data.get('score', 0))
+            weight = _num(param_data.get('weight', 10))
+            is_custom = bool(param_data.get('custom', False))
+
             total_weighted_score += (score * weight)
             total_weight += weight
             valid_scores += 1
-            
-            # Track custom parameter performance
+
             if is_custom:
                 custom_parameter_performance[param_name] = {
-                    'score': score,
-                    'weight': weight,
-                    'confidence': param_data.get('confidence', 5)
+                    'score': score, 'weight': weight, 'confidence': _num(param_data.get('confidence', 5))
                 }
-            
-            # Collect low scores for attention
+
             if score < 70:
                 low_scores.append({
                     'parameter': param_name,
                     'score': score,
-                    'coaching': param_data.get('coaching_opportunity', 'No coaching provided'),
+                    'coaching': param_data.get('coaching_opportunity', 'Review performance'),
                     'is_custom': is_custom
                 })
-            
-            # Collect coaching opportunities
+
             if param_data.get('coaching_opportunity'):
                 coaching_opportunities.append({
                     'parameter': param_name,
                     'coaching': param_data['coaching_opportunity'],
                     'is_custom': is_custom
                 })
-    
-    if total_weight == 0:
+
+    if total_weight <= 0:
         return {"error": "No valid weighted scores found"}
-    
+
     overall_score = round(total_weighted_score / total_weight, 2)
-    
-    # Determine quality bucket
+
     if overall_score >= 90:
         quality_bucket = "Excellent"
     elif overall_score >= 80:
@@ -191,219 +448,156 @@ def calculate_overall_metrics(parameter_scores: dict) -> dict:
         quality_bucket = "Below Average"
     else:
         quality_bucket = "Poor"
-    
+
+    score_distribution = {
+        "excellent": sum(1 for _, d in parameter_scores.items() if _num(d.get('score', 0)) >= 90),
+        "good":      sum(1 for _, d in parameter_scores.items() if 80 <= _num(d.get('score', 0)) < 90),
+        "average":   sum(1 for _, d in parameter_scores.items() if 70 <= _num(d.get('score', 0)) < 80),
+        "weak":      sum(1 for _, d in parameter_scores.items() if 60 <= _num(d.get('score', 0)) < 70),
+        "poor":      sum(1 for _, d in parameter_scores.items() if _num(d.get('score', 0)) < 60),
+    }
+
+    # Top 3 coaching items (fallback to lowest scores)
+    low_scores_sorted = sorted(
+        low_scores, key=lambda x: (_num(x['score']), -_num(parameter_scores[x['parameter']].get('weight', 0)))
+    )
+    top_coaching = coaching_opportunities[:3] if coaching_opportunities else [
+        {"parameter": x["parameter"], "coaching": x.get("coaching", "Improve performance"), "is_custom": x["is_custom"]}
+        for x in low_scores_sorted[:3]
+    ]
+
     return {
         "overall_score": overall_score,
         "quality_bucket": quality_bucket,
         "total_parameters_scored": valid_scores,
         "parameters_needing_attention": len(low_scores),
         "low_scoring_parameters": low_scores,
-        "coaching_opportunities": coaching_opportunities[:3],  # Top 3
+        "coaching_opportunities": top_coaching,
         "custom_parameter_performance": custom_parameter_performance,
-        "score_distribution": {
-            "excellent": sum(1 for _, data in parameter_scores.items() 
-                           if data.get('score', 0) >= 90),
-            "good": sum(1 for _, data in parameter_scores.items() 
-                       if 80 <= data.get('score', 0) < 90),
-            "average": sum(1 for _, data in parameter_scores.items() 
-                          if 70 <= data.get('score', 0) < 80),
-            "below_average": sum(1 for _, data in parameter_scores.items() 
-                                if 60 <= data.get('score', 0) < 70),
-            "poor": sum(1 for _, data in parameter_scores.items() 
-                       if data.get('score', 0) < 60)
-        }
+        "score_distribution": score_distribution,
     }
 
-def get_available_analysis_depths():
-    """Return available analysis depth options."""
-    return list(ANALYSIS_PARAMETERS.keys())
-
-def get_parameters_for_depth(depth: str):
-    """Get parameter configuration for specified analysis depth."""
-    return ANALYSIS_PARAMETERS.get(depth, ANALYSIS_PARAMETERS["Standard Analysis"])
 
 # ======================================================================================
-# ADMIN/DEVELOPER FUNCTIONS
+# MULTI-STAGE ANALYSIS (A/B preserved across all stages)
 # ======================================================================================
 
-def run_model_comparison_analysis(transcript: str, depth: str = "Standard Analysis", 
-                                custom_rubric: str = None) -> dict:
-    """
-    Special function for admin to get detailed model comparison.
-    This is your secret function to evaluate model performance!
-    """
-    return run_comprehensive_analysis(
-        transcript=transcript,
-        depth=depth,
-        custom_rubric=custom_rubric,
-        admin_mode=True
-    )
+def run_initial_triage_ab(transcript: str, mapping: Dict[str, str], max_retries: int = 2, admin_view: bool = False) -> dict:
+    prompt = get_triage_prompt(transcript)
+    results_by_label, perf = _call_pair_with_mapping(prompt, mapping, max_retries)
+    payload = {"results": [{"label": lbl, "result": results_by_label[lbl]} for lbl in ("A", "B") if lbl in results_by_label]}
+    if admin_view:
+        payload["admin"] = {"performance_summary": {"total_time": perf["total_time"], "models_used": perf["models_used"]}}
+    return payload
 
-def get_model_performance_stats(comparison_results: dict) -> dict:
+
+def run_business_outcome_ab(transcript: str, mapping: Dict[str, str], max_retries: int = 2, admin_view: bool = False) -> dict:
+    prompt = get_business_outcome_prompt(transcript)
+    results_by_label, perf = _call_pair_with_mapping(prompt, mapping, max_retries)
+    payload = {"results": [{"label": lbl, "result": results_by_label[lbl]} for lbl in ("A", "B") if lbl in results_by_label]}
+    if admin_view:
+        payload["admin"] = {"performance_summary": {"total_time": perf["total_time"], "models_used": perf["models_used"]}}
+    return payload
+
+
+def run_parameter_scoring_ab(transcript: str, parameters: List[dict], mapping: Dict[str, str], max_retries: int = 2, admin_view: bool = False) -> dict:
     """
-    Analyze model performance from comparison results.
+    Score each parameter for A and B with the same mapping.
+    Returns:
+      {
+        "A": {param_name: result_with_weight_custom, ...},
+        "B": {param_name: result_with_weight_custom, ...},
+        "admin": {...?}
+      }
     """
-    stats = {
-        "gpt_wins": 0,
-        "gemini_wins": 0,
-        "ties": 0,
-        "average_variance": 0,
-        "reliability_breakdown": {},
-        "performance_summary": {}
+    scores = {"A": {}, "B": {}}
+    perf_totals = {"A": 0.0, "B": 0.0, "calls": 0}
+
+    for p in parameters:
+        prompt = get_parameter_scoring_prompt(transcript, p["name"], p["anchors"])
+        results_by_label, perf = _call_pair_with_mapping(prompt, mapping, max_retries)
+        perf_totals["calls"] += 1
+        for lbl in results_by_label:
+            r = results_by_label[lbl]
+            if "error" not in r:
+                r["weight"] = p.get("weight", 10)
+                r["custom"] = p.get("custom", False)
+            scores[lbl][p["name"]] = r
+            if r.get("_performance", {}).get("response_time"):
+                perf_totals[lbl] += r["_performance"]["response_time"]
+
+    payload = {"A": scores.get("A", {}), "B": scores.get("B", {})}
+    if admin_view:
+        payload["admin"] = {
+            "perf_estimates": {
+                "A_total_secs": round(perf_totals["A"], 2),
+                "B_total_secs": round(perf_totals["B"], 2),
+                "param_calls": perf_totals["calls"],
+            }
+        }
+    return payload
+
+
+def run_comprehensive_analysis(transcript: str, depth: str = "Standard Analysis", custom_rubric: Optional[str] = None, max_retries: int = 2, admin_view: bool = False) -> dict:
+    """
+    Orchestrated A/B analysis with a single, consistent A/B mapping:
+      - triage
+      - business outcome
+      - parameter scoring
+      - overall metrics per variant
+    Returns a dict that the UI can render without needing Streamlit calls here.
+    """
+    if not transcript or not transcript.strip():
+        return {"error": "Empty transcript provided"}
+
+    openai_ok, gemini_ok = validate_api_keys()
+    if not (openai_ok or gemini_ok):
+        return {"error": "No API keys configured"}
+
+    cleaned = sanitize_transcript(transcript)
+    run_id, mapping = _create_ab_mapping(openai_ok, gemini_ok)
+
+    # Stage 1: triage
+    triage = run_initial_triage_ab(cleaned, mapping, max_retries, admin_view)
+
+    # Stage 2: business outcomes
+    outcome = run_business_outcome_ab(cleaned, mapping, max_retries, admin_view)
+
+    # Stage 3: parameter scoring + overall
+    params = get_combined_parameters(depth, custom_rubric)
+    param_scores = run_parameter_scoring_ab(cleaned, params, mapping, max_retries, admin_view)
+
+    overall = {}
+    if "A" in param_scores and param_scores["A"]:
+        overall["A"] = calculate_overall_metrics(param_scores["A"])
+    if "B" in param_scores and param_scores["B"]:
+        overall["B"] = calculate_overall_metrics(param_scores["B"])
+
+    payload = {
+        "run_id": run_id,
+        "mapping_present": bool(mapping),  # not the mapping itself (kept admin-only)
+        "stages": [
+            {"name": "triage", "results": triage["results"]},
+            {"name": "business_outcome", "results": outcome["results"]},
+            {"name": "parameter_scores", "A": param_scores.get("A", {}), "B": param_scores.get("B", {})},
+        ],
+        "overall": overall,
     }
-    
-    variances = []
-    
-    # Analyze each comparison in the results
-    for stage, data in comparison_results.get('_model_comparison_data', {}).items():
-        if 'gpt' in data and 'gemini' in data:
-            gpt_data = data['gpt']
-            gemini_data = data['gemini']
-            
-            # Compare response completeness and quality
-            gpt_valid = 'error' not in gpt_data
-            gemini_valid = 'error' not in gemini_data
-            
-            if gpt_valid and not gemini_valid:
-                stats["gpt_wins"] += 1
-            elif gemini_valid and not gpt_valid:
-                stats["gemini_wins"] += 1
-            elif gpt_valid and gemini_valid:
-                stats["ties"] += 1
-                
-                # Calculate variance if scores exist
-                if 'score' in gpt_data and 'score' in gemini_data:
-                    variance = abs(gpt_data['score'] - gemini_data['score'])
-                    variances.append(variance)
-    
-    if variances:
-        stats["average_variance"] = round(sum(variances) / len(variances), 2)
-    
-    return statsimport json
-import streamlit as st
-from openai import OpenAI
-import google.generativeai as genai
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import statistics
-import time
 
-# ======================================================================================
-# API CLIENT SETUP & CONFIGURATION
-# ======================================================================================
-
-# Load API keys from Streamlit secrets
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
-
-# Define the available AI models for selection
-AVAILABLE_MODELS = {
-    "GPT-4o (OpenAI)": "gpt-4o",
-    "Gemini 1.5 Pro (Google)": "gemini-1.5-pro"
-}
-
-# Custom Parameters Storage (will be moved to database later)
-CUSTOM_PARAMETERS = {
-    "Sales Outbound": [
-        {"name": "emi_offer", "weight": 15, "anchors": "90-100: Proactively offered 0% EMI when applicable. 70-89: Offered EMI when asked. 50-69: Mentioned EMI options briefly. 30-49: Failed to offer EMI when opportunity existed. 0-29: No EMI discussion despite clear opportunity."},
-        {"name": "urgency_creation", "weight": 20, "anchors": "90-100: Effectively created urgency with limited-time offers. 70-89: Some urgency created. 50-69: Mild urgency attempts. 30-49: Weak urgency creation. 0-29: No urgency created."},
-    ],
-    "Banking Support": [
-        {"name": "identity_verification", "weight": 25, "anchors": "90-100: Properly verified customer identity before sharing financial details. 70-89: Good verification with minor gaps. 50-69: Basic verification done. 30-49: Insufficient verification. 0-29: No identity verification before sharing sensitive info."},
-        {"name": "data_protection", "weight": 20, "anchors": "90-100: Excellent data protection practices throughout call. 70-89: Good data protection with minor issues. 50-69: Adequate protection. 30-49: Some data protection concerns. 0-29: Poor data protection practices."},
-    ]
-}
-
-# Define analysis parameters based on depth
-ANALYSIS_PARAMETERS = {
-    "Quick Scan": [
-        {"name": "greeting", "weight": 15, "anchors": "90-100: Professional greeting with company name, agent name, and polite inquiry. 70-89: Good greeting with most elements present. 50-69: Basic greeting missing some elements. 30-49: Poor greeting, unprofessional. 0-29: No proper greeting."},
-        {"name": "empathy", "weight": 20, "anchors": "90-100: Shows genuine understanding and concern for customer's situation. 70-89: Demonstrates good empathy with appropriate responses. 50-69: Shows some empathy but could be more genuine. 30-49: Limited empathy shown. 0-29: No empathy demonstrated."},
-        {"name": "resolution", "weight": 30, "anchors": "90-100: Completely resolves customer issue with clear solution. 70-89: Good resolution with minor gaps. 50-69: Partial resolution provided. 30-49: Minimal resolution attempts. 0-29: No resolution provided."}
-    ],
-    "Standard Analysis": [
-        {"name": "greeting", "weight": 10, "anchors": "90-100: Professional greeting with company name, agent name, and polite inquiry. 70-89: Good greeting with most elements present. 50-69: Basic greeting missing some elements. 30-49: Poor greeting, unprofessional. 0-29: No proper greeting."},
-        {"name": "empathy", "weight": 15, "anchors": "90-100: Shows genuine understanding and concern for customer's situation. 70-89: Demonstrates good empathy with appropriate responses. 50-69: Shows some empathy but could be more genuine. 30-49: Limited empathy shown. 0-29: No empathy demonstrated."},
-        {"name": "resolution", "weight": 25, "anchors": "90-100: Completely resolves customer issue with clear solution. 70-89: Good resolution with minor gaps. 50-69: Partial resolution provided. 30-49: Minimal resolution attempts. 0-29: No resolution provided."},
-        {"name": "compliance", "weight": 20, "anchors": "90-100: Follows all compliance requirements including mandatory statements. 70-89: Good compliance with minor gaps. 50-69: Some compliance issues noted. 30-49: Multiple compliance violations. 0-29: Major compliance failures."},
-        {"name": "professionalism", "weight": 15, "anchors": "90-100: Maintains professional tone throughout, uses appropriate language. 70-89: Generally professional with minor lapses. 50-69: Somewhat professional but inconsistent. 30-49: Limited professionalism. 0-29: Unprofessional behavior."},
-        {"name": "communication_clarity", "weight": 15, "anchors": "90-100: Clear, concise communication that's easy to understand. 70-89: Generally clear with minor confusion. 50-69: Somewhat clear but could be improved. 30-49: Often unclear or confusing. 0-29: Very poor communication."}
-    ],
-    "Deep Dive": [
-        {"name": "greeting", "weight": 8, "anchors": "90-100: Professional greeting with company name, agent name, and polite inquiry. 70-89: Good greeting with most elements present. 50-69: Basic greeting missing some elements. 30-49: Poor greeting, unprofessional. 0-29: No proper greeting."},
-        {"name": "empathy", "weight": 12, "anchors": "90-100: Shows genuine understanding and concern for customer's situation. 70-89: Demonstrates good empathy with appropriate responses. 50-69: Shows some empathy but could be more genuine. 30-49: Limited empathy shown. 0-29: No empathy demonstrated."},
-        {"name": "resolution", "weight": 20, "anchors": "90-100: Completely resolves customer issue with clear solution. 70-89: Good resolution with minor gaps. 50-69: Partial resolution provided. 30-49: Minimal resolution attempts. 0-29: No resolution provided."},
-        {"name": "compliance", "weight": 15, "anchors": "90-100: Follows all compliance requirements including mandatory statements. 70-89: Good compliance with minor gaps. 50-69: Some compliance issues noted. 30-49: Multiple compliance violations. 0-29: Major compliance failures."},
-        {"name": "professionalism", "weight": 12, "anchors": "90-100: Maintains professional tone throughout, uses appropriate language. 70-89: Generally professional with minor lapses. 50-69: Somewhat professional but inconsistent. 30-49: Limited professionalism. 0-29: Unprofessional behavior."},
-        {"name": "active_listening", "weight": 10, "anchors": "90-100: Demonstrates excellent active listening with appropriate responses and clarifying questions. 70-89: Good listening skills shown. 50-69: Some listening but misses cues. 30-49: Poor listening skills. 0-29: No evidence of active listening."},
-        {"name": "product_knowledge", "weight": 13, "anchors": "90-100: Expert knowledge of products/services with accurate information. 70-89: Good product knowledge with minor gaps. 50-69: Basic knowledge but some inaccuracies. 30-49: Limited product knowledge. 0-29: Poor or incorrect product knowledge."},
-        {"name": "call_control", "weight": 10, "anchors": "90-100: Maintains excellent control of call flow, manages time effectively. 70-89: Good call control with minor issues. 50-69: Some call control but could be better. 30-49: Poor call control, loses direction. 0-29: No call control, chaotic flow."}
-    ]
-}
-
-# ======================================================================================
-# STEALTH DUAL MODEL SYSTEM
-# ======================================================================================
-
-class ModelConsensus:
-    """Handles dual model analysis and consensus building"""
-    
-    @staticmethod
-    def calculate_consensus_score(gpt_score: float, gemini_score: float) -> dict:
-        """Calculate consensus score with confidence metrics"""
-        scores = [gpt_score, gemini_score]
-        consensus = round(statistics.mean(scores), 1)
-        variance = abs(gpt_score - gemini_score)
-        
-        # Confidence based on agreement between models
-        if variance <= 5:
-            confidence = 10  # High confidence - models agree closely
-            reliability = "Very High"
-        elif variance <= 10:
-            confidence = 8   # Good confidence
-            reliability = "High"
-        elif variance <= 20:
-            confidence = 6   # Medium confidence
-            reliability = "Medium"
-        else:
-            confidence = 4   # Low confidence - significant disagreement
-            reliability = "Low - Review Required"
-        
-        return {
-            "consensus_score": consensus,
-            "confidence": confidence,
-            "reliability": reliability,
-            "variance": variance,
-            "gpt_score": gpt_score,
-            "gemini_score": gemini_score
+    if admin_view:
+        payload["admin"] = {
+            "mapping": mapping,
+            "triage_admin": triage.get("admin"),
+            "outcome_admin": outcome.get("admin"),
+            "params_admin": param_scores.get("admin"),
         }
-    
-    @staticmethod
-    def combine_text_responses(gpt_response: str, gemini_response: str) -> str:
-        """Intelligently combine text responses from both models"""
-        # For now, prefer GPT's response but could implement more sophisticated merging
-        if len(gpt_response) > len(gemini_response):
-            return gpt_response
-        return gemini_response
-    
-    @staticmethod
-    def analyze_model_performance(gpt_result: dict, gemini_result: dict) -> dict:
-        """Analyze which model performed better"""
-        performance_metrics = {
-            "gpt_reliability": 0,
-            "gemini_reliability": 0,
-            "preferred_model": "GPT",
-            "reasoning": []
-        }
-        
-        # Check response completeness
-        gpt_complete = 'error' not in gpt_result
-        gemini_complete = 'error' not in gemini_result
-        
-        if gpt_complete and not gemini_complete:
-            performance_metrics["preferred_model"] = "GPT"
-            performance_metrics["reasoning"].append("GPT provided complete response")
-        elif gemini_complete and not gpt_complete:
-            performance_metrics["preferred_model"] = "Gemini"
-            performance_metrics["reasoning"].append("Gemini provided complete response")
-        
-        return performance_metrics
+
+    # Optionally stash a compact detailed log:
+    _stash_model_comparison({
+        "run_id": run_id,
+        "mapping": mapping,
+        "depth": depth,
+        "custom_rubric": custom_rubric,
+        "notes": "comprehensive_ab",
+    })
+    return payload
