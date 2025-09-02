@@ -314,12 +314,25 @@ def _process_audio_cached(file_hash: str, file_name: str, file_content: bytes) -
     }
 
     try:
-        # Step 2: Transcribe in original language
-        original_transcript = _transcribe_audio_original(file_name, file_content)
+        # Step 2: Transcribe in original language (based on selected engine)
+        stt_engine = st.session_state.get("stt_engine", "Whisper")
+
+        if stt_engine == "Google STT":
+            try:
+                from google_stt import transcribe as google_transcribe
+                original_transcript = google_transcribe(file_name, file_content)
+            except Exception as e:
+                result["status"] = "error"
+                result["error"] = f"Google STT transcription failed: {e}"
+                return result
+        else:
+            original_transcript = _transcribe_audio_original(file_name, file_content)
+
         if "error" in original_transcript:
             result["status"] = "error"
             result["error"] = f"Original transcription failed: {original_transcript['error']}"
             return result
+
 
         # Step 3: Translate to English
         english_transcript = _translate_to_english(file_name, file_content)
@@ -352,6 +365,7 @@ def _process_audio_cached(file_hash: str, file_name: str, file_content: bytes) -
                 "pii_scrubbed": True
             }
         })
+        result["engine"] = stt_engine
         return result
 
     except Exception as e:
