@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Tuple
 from functools import lru_cache
 import time
 import re
+import json
+from google.cloud import speech
 
 # ======================================================================================
 # CONSTANTS AND CONFIGURATION
