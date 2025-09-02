@@ -625,6 +625,16 @@ def page_run_history():
 
 def main():
     st.sidebar.title("Call Insights Desk")
+
+    # === NEW: STT Engine selector ===
+    st.sidebar.markdown("**Transcription Engine**")
+    st.session_state.stt_engine = st.sidebar.radio(
+        "Choose Engine",
+        ["Whisper", "Google STT"],
+        index=0,
+        help="Select which STT engine to use for new uploads"
+    )
+
     pages = {
         "Call Analysis": page_call_analysis,
         "Dashboard": page_dashboard,
