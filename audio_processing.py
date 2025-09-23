@@ -167,7 +167,7 @@ def _process_with_assemblyai(file_name: str, file_content: bytes) -> Dict:
         if not api_key: raise ValueError("AssemblyAI API key not found.")
         assemblyai.settings.api_key = api_key
         transcriber = assemblyai.Transcriber()
-        config = assemblyai.TranscriptionConfig(speaker_labels=True)
+        config = assemblyai.TranscriptionConfig(speaker_labels=True, language_detection=True)
         transcript = transcriber.transcribe(io.BytesIO(file_content), config)
 
         if transcript.status == assemblyai.TranscriptStatus.error: raise Exception(transcript.error)
