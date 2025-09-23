@@ -5,7 +5,7 @@ import hashlib
 import time
 import re
 from functools import lru_cache
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from openai import OpenAI
@@ -13,7 +13,7 @@ import google.generativeai as genai
 
 # SDKs for the new engines
 # from gladia import GladiaClient
-import assemblyai
+import assemblyai as aai
 from deepgram import DeepgramClient, PrerecordedOptions
 
 # ======================================================================================
