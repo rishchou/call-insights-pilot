@@ -5,6 +5,5 @@ pandas
 tqdm
 google-generativeai
 plotly
-gladia
 assemblyai
 deepgram-sdk
