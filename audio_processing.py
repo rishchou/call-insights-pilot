@@ -97,7 +97,7 @@ def _label_speakers_batch(segments: List) -> List[Dict]:
 
         for j, seg in enumerate(batch):
             idx = i + j
-           labeled_segment = {
+            labeled_segment = {
                 "id": idx,
                 "speaker": label_map.get(idx, "AGENT" if idx % 2 == 0 else "CUSTOMER"),
                 "text": getattr(seg, 'text', ''),
