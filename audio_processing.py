@@ -133,27 +133,27 @@ def _process_with_whisper_gemini(file_name: str, file_content: bytes) -> Dict:
 # ENGINE 2: Gladia (All-in-One)
 # ======================================================================================
 # def _process_with_gladia(file_name: str, file_content: bytes) -> Dict:
-    """Processes audio using Gladia's full potential."""
+#    """Processes audio using Gladia's full potential."""
 #    try:
-        api_key = st.secrets.get("GLADIA_API_KEY")
-        if not api_key: raise ValueError("Gladia API key not found.")
-        client = GladiaClient(api_key)
-        response = client.audio.transcription.create(audio_bytes=file_content, diarization=True, translation=True, target_translation_language="en")
-        
-        segments_en = []
-        if response.translation and response.translation.utterances:
-            for utt in response.translation.utterances:
-                segments_en.append({"start": utt.start, "end": utt.end, "text": utt.transcription, "speaker": f"SPEAKER_{utt.speaker}"})
-        
-        return {
-            "status": "success", "engine": "gladia",
-            "original_text": response.transcription.full_transcript,
-            "english_text": response.translation.full_transcript,
-            "segments": segments_en,
-            "language": response.language, "duration": response.duration, "error_message": None
-        }
-    except Exception as e:
-        return {"status": "error", "engine": "gladia", "error_message": str(e)}
+#        api_key = st.secrets.get("GLADIA_API_KEY")
+#        if not api_key: raise ValueError("Gladia API key not found.")
+#        client = GladiaClient(api_key)
+#        response = client.audio.transcription.create(audio_bytes=file_content, diarization=True, translation=True, target_translation_language="en")
+#
+#        segments_en = []
+#        if response.translation and response.translation.utterances:
+#            for utt in response.translation.utterances:
+#               segments_en.append({"start": utt.start, "end": utt.end, "text": utt.transcription, "speaker": f"SPEAKER_{utt.speaker}"})
+#        
+#        return {
+#            "status": "success", "engine": "gladia",
+#            "original_text": response.transcription.full_transcript,
+#            "english_text": response.translation.full_transcript,
+#            "segments": segments_en,
+#            "language": response.language, "duration": response.duration, "error_message": None
+#        }
+#    except Exception as e:
+#        return {"status": "error", "engine": "gladia", "error_message": str(e)}
 
 # ======================================================================================
 # ENGINE 3: AssemblyAI (All-in-One)
