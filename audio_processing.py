@@ -161,66 +161,120 @@ def _process_with_whisper_gemini(file_name: str, file_content: bytes) -> Dict:
 # ENGINE 3: AssemblyAI (All-in-One)
 # ======================================================================================
 def _process_with_assemblyai(file_name: str, file_content: bytes) -> Dict:
-    """Processes audio using AssemblyAI (transcription + diarization)."""
+    """AssemblyAI: auto language detection, speaker labels, and English translation."""
     try:
         api_key = st.secrets.get("ASSEMBLYAI_API_KEY")
-        if not api_key: raise ValueError("AssemblyAI API key not found.")
+        if not api_key:
+            raise ValueError("AssemblyAI API key not found.")
         assemblyai.settings.api_key = api_key
+
         transcriber = assemblyai.Transcriber()
-        config = assemblyai.TranscriptionConfig(speaker_labels=True, language_detection=True)
+        config = assemblyai.TranscriptionConfig(
+            speaker_labels=True,          # diarization
+            language_detection=True,      # auto-detect language
+            translation_target="en"       # request English translation
+        )
+
         transcript = transcriber.transcribe(io.BytesIO(file_content), config)
 
-        if transcript.status == assemblyai.TranscriptStatus.error: raise Exception(transcript.error)
-            
+        if transcript.status == assemblyai.TranscriptStatus.error:
+            raise Exception(transcript.error)
+
+        # Build segments from utterances (present when speaker_labels=True)
         segments = []
-        if transcript.utterances:
+        if getattr(transcript, "utterances", None):
             for utt in transcript.utterances:
-                segments.append({"start": utt.start / 1000.0, "end": utt.end / 1000.0, "text": utt.text, "speaker": utt.speaker})
-        
+                segments.append({
+                    "start": (utt.start or 0) / 1000.0,
+                    "end":   (utt.end or 0) / 1000.0,
+                    "text":  utt.text or "",
+                    "speaker": utt.speaker or "SPEAKER_0"
+                })
+
+        # Defensive language field access
+        detected_language = getattr(transcript, "language", None)
+        if not detected_language:
+            detected_language = getattr(transcript, "language_code", None) or "unknown"
+
+        # Translation text (field name may vary by SDK version)
+        english_text = getattr(transcript, "translation_text", None)
+        if not english_text:
+            # Some versions keep translations under .translation or .translations
+            english_text = getattr(transcript, "translation", None) or "N/A"
+
         return {
-            "status": "success", "engine": "assemblyai",
-            "original_text": transcript.text,
-            "english_text": "N/A - Requires separate translation step",
+            "status": "success",
+            "engine": "assemblyai",
+            "original_text": transcript.text or "",
+            "english_text": english_text if isinstance(english_text, str) else "N/A",
             "segments": segments,
-            "language": str(transcript.language_code), "duration": transcript.audio_duration, "error_message": None
+            "language": detected_language,
+            "duration": getattr(transcript, "audio_duration", 0),
+            "error_message": None,
         }
     except Exception as e:
         return {"status": "error", "engine": "assemblyai", "error_message": str(e)}
-
 # ======================================================================================
 # ENGINE 4: Deepgram (All-in-One)
 # ======================================================================================
 def _process_with_deepgram(file_name: str, file_content: bytes) -> Dict:
-    """Processes audio using Deepgram (transcription, diarization, translation)."""
+    """Deepgram: transcription + diarization + optional English translation."""
     try:
         api_key = st.secrets.get("DEEPGRAM_API_KEY")
-        if not api_key: raise ValueError("Deepgram API key not found.")
-        deepgram = DeepgramClient(api_key)
-        payload = {"buffer": file_content}
-        options = PrerecordedOptions(model="nova-2", smart_format=True, utterances=True, diarize=True, translation="en")
-        response = deepgram.listen.prerecorded.v("1").transcribe_source(payload, options)
-        
-        result = response.to_dict()
-        ch = result.get("results", {}).get("channels", [{}])[0]
-        alt = ch.get("alternatives", [{}])[0]
-        
+        if not api_key:
+            raise ValueError("Deepgram API key not found.")
+
+        dg = DeepgramClient(api_key)
+
+        # v3 SDK path uses 'transcription.prerecorded(...)'
+        source = {"buffer": file_content}  # or FileSource(buffer=file_content)
+
+        options = PrerecordedOptions(
+            model="nova-3",
+            smart_format=True,
+            punctuate=True,
+            utterances=True,      # utterance segmentation
+            diarize=True,         # speaker diarization
+            detect_language=True, # auto language detection
+            translate=True,       # enable translation
+            target_lang="en"      # translate to English
+        )
+
+        res = dg.transcription.prerecorded(source, options)
+        result = res.to_dict()
+
+        # Primary transcript (English if translate=True)
+        ch = (result.get("results", {}).get("channels") or [{}])[0]
+        alt = (ch.get("alternatives") or [{}])[0]
+        english_text = alt.get("transcript", "") or ""
+
+        # Utterance-level segments with speakers
         segments_en = []
-        if result.get("results", {}).get("utterances"):
-            for utt in result["results"]["utterances"]:
-                translated_text = utt.get("translation", utt.get("transcript"))
-                segments_en.append({"start": utt["start"], "end": utt["end"], "text": translated_text, "speaker": f"SPEAKER_{utt['speaker']}"})
-        
+        for utt in (result.get("results", {}).get("utterances") or []):
+            # Some payloads include per-utterance translation; if not, use utterance transcript
+            seg_text = utt.get("translation") or utt.get("transcript") or ""
+            segments_en.append({
+                "start": utt.get("start", 0.0),
+                "end":   utt.get("end", 0.0),
+                "text":  seg_text,
+                "speaker": f"SPEAKER_{utt.get('speaker', 0)}"
+            })
+
+        detected_language = ch.get("detected_language") or alt.get("language") or "unknown"
+        duration = result.get("metadata", {}).get("duration", 0.0)
+
         return {
-            "status": "success", "engine": "deepgram",
-            "original_text": "N/A - Translation replaces original in single call",
-            "english_text": alt.get("transcript", ""),
+            "status": "success",
+            "engine": "deepgram",
+            "original_text": "N/A - Translation enabled",  # if you want both, run a non-translate pass too
+            "english_text": english_text,
             "segments": segments_en,
-            "language": ch.get("detected_language", "unknown"),
-            "duration": result.get("metadata", {}).get("duration", 0), "error_message": None
+            "language": detected_language,
+            "duration": duration,
+            "error_message": None
         }
     except Exception as e:
         return {"status": "error", "engine": "deepgram", "error_message": str(e)}
-
 # ======================================================================================
 # CACHED ROUTER FUNCTION
 # ======================================================================================
