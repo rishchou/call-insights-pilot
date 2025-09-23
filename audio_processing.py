@@ -375,3 +375,84 @@ def process_audio_with_progress(file_name: str, file_content: bytes, engine: str
     time.sleep(1)
     progress_bar.empty()
     return result
+# -------------------- helpers --------------------
+
+def _guess_mime(fname: str) -> str:
+    f = fname.lower()
+    if f.endswith(".wav"):  return "audio/wav"
+    if f.endswith(".mp3"):  return "audio/mpeg"
+    if f.endswith(".m4a"):  return "audio/mp4"
+    if f.endswith(".ogg"):  return "audio/ogg"
+    if f.endswith(".webm"): return "audio/webm"
+    return "application/octet-stream"
+
+# -------------------- main router for UI --------------------
+
+def process_audio(file_name: str, file_content: bytes, *, engine: str) -> Dict[str, Any]:
+    """
+    Router used by main_app.py. Calls the new transcribe_* funcs and returns
+    a dict that includes `status` and `english_text` so the UI works unchanged.
+    """
+    try:
+        if engine == "deepgram":
+            out = transcribe_deepgram(file_content, enable_intelligence=True)  # flip to False if you don’t want DG Intelligence now
+        elif engine == "assemblyai":
+            out = transcribe_assemblyai(file_content)
+        elif engine == "whisper_gemini":
+            # We’ll just run Whisper here (no Gemini processing in this step)
+            mime = _guess_mime(file_name)
+            out = transcribe_openai_whisper(file_content, filename=file_name, mime=mime)
+        elif engine == "gladia":
+            return {
+                "provider": "gladia",
+                "model": "",
+                "language": "unknown",
+                "original_text": "",
+                "segments": [],
+                "duration": 0.0,
+                "intelligence": None,
+                "summary": None,
+                "diarization_supported": False,
+                "engine": "gladia",
+                "status": "error",
+                "error_message": "Gladia is not wired yet in this build."
+            }
+        else:
+            return {
+                "provider": engine,
+                "model": "",
+                "language": "unknown",
+                "original_text": "",
+                "segments": [],
+                "duration": 0.0,
+                "intelligence": None,
+                "summary": None,
+                "diarization_supported": False,
+                "engine": engine,
+                "status": "error",
+                "error_message": f"Unknown engine '{engine}'."
+            }
+
+        # Normalize for your UI (main_app.py expects these)
+        out["engine"] = engine
+        out["status"] = "error" if out.get("error_message") else "success"
+        # Until you add a translator step, show original text as snippet fallback
+        out.setdefault("english_text", out.get("original_text", ""))
+
+        return out
+
+    except Exception as e:
+        return {
+            "provider": engine,
+            "model": "",
+            "language": "unknown",
+            "original_text": "",
+            "segments": [],
+            "duration": 0.0,
+            "intelligence": None,
+            "summary": None,
+            "diarization_supported": engine in ("deepgram", "assemblyai"),
+            "engine": engine,
+            "status": "error",
+            "error_message": str(e)
+        }
