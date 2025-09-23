@@ -105,7 +105,7 @@ def _label_speakers_batch(segments: List) -> List[Dict]:
                 "end": getattr(seg, 'end', 0)
             }
             all_labeled.append(labeled_segment)
-    return all_labeled
+        return all_labeled
 
 def _process_with_whisper_gemini(file_name: str, file_content: bytes) -> Dict:
     """Original pipeline using Whisper STT/Translate and Gemini diarization."""
