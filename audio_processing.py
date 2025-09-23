@@ -12,7 +12,7 @@ from openai import OpenAI
 import google.generativeai as genai
 
 # SDKs for the new engines
-from gladia import GladiaClient
+# from gladia import GladiaClient
 import assemblyai
 from deepgram import DeepgramClient, PrerecordedOptions
 
@@ -132,9 +132,9 @@ def _process_with_whisper_gemini(file_name: str, file_content: bytes) -> Dict:
 # ======================================================================================
 # ENGINE 2: Gladia (All-in-One)
 # ======================================================================================
-def _process_with_gladia(file_name: str, file_content: bytes) -> Dict:
+# def _process_with_gladia(file_name: str, file_content: bytes) -> Dict:
     """Processes audio using Gladia's full potential."""
-    try:
+#    try:
         api_key = st.secrets.get("GLADIA_API_KEY")
         if not api_key: raise ValueError("Gladia API key not found.")
         client = GladiaClient(api_key)
@@ -231,7 +231,7 @@ def _process_audio_cached(file_hash: str, file_name: str, file_content: bytes, e
 
     engine_map = {
         "whisper_gemini": _process_with_whisper_gemini,
-        "gladia": _process_with_gladia,
+        # "gladia": _process_with_gladia,
         "assemblyai": _process_with_assemblyai,
         "deepgram": _process_with_deepgram
     }
