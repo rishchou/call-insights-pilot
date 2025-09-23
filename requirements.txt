@@ -8,3 +8,4 @@ plotly
 gladia
 assemblyai
 deepgram-sdk
+python-3.10
