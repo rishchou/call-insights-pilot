@@ -160,118 +160,167 @@ def _process_with_whisper_gemini(file_name: str, file_content: bytes) -> Dict:
 # ======================================================================================
 # ENGINE 3: AssemblyAI (All-in-One)
 # ======================================================================================
-def _process_with_assemblyai(file_name: str, file_content: bytes) -> Dict:
-    """AssemblyAI: auto language detection, speaker labels, and English translation."""
+def transcribe_assemblyai(audio_bytes: bytes) -> Dict[str, Any]:
+    """
+    AssemblyAI transcription with auto language detection and diarization.
+    (Summarization is OFF here; you can add it later in config if needed.)
+    """
     try:
         api_key = st.secrets.get("ASSEMBLYAI_API_KEY")
         if not api_key:
-            raise ValueError("AssemblyAI API key not found.")
-        assemblyai.settings.api_key = api_key
+            raise ValueError("AssemblyAI API key not found in st.secrets['ASSEMBLYAI_API_KEY'].")
 
-        transcriber = assemblyai.Transcriber()
-        config = assemblyai.TranscriptionConfig(
-            speaker_labels=True,          # diarization
-            language_detection=True,      # auto-detect language
-            translation_target="en"       # request English translation
+        aai.settings.api_key = api_key
+        transcriber = aai.Transcriber()
+        cfg = aai.TranscriptionConfig(
+            speaker_labels=True,       # diarization -> transcript.utterances
+            language_detection=True    # auto language detection
         )
 
-        transcript = transcriber.transcribe(io.BytesIO(file_content), config)
+        transcript = transcriber.transcribe(io.BytesIO(audio_bytes), cfg)
 
-        if transcript.status == assemblyai.TranscriptStatus.error:
-            raise Exception(transcript.error)
+        # If AssemblyAI signals failure
+        if getattr(transcript, "status", None) == aai.TranscriptStatus.error:
+            raise RuntimeError(getattr(transcript, "error", "Transcription failed."))
 
-        # Build segments from utterances (present when speaker_labels=True)
-        segments = []
-        if getattr(transcript, "utterances", None):
-            for utt in transcript.utterances:
-                segments.append({
-                    "start": (utt.start or 0) / 1000.0,
-                    "end":   (utt.end or 0) / 1000.0,
-                    "text":  utt.text or "",
-                    "speaker": utt.speaker or "SPEAKER_0"
-                })
+        text = getattr(transcript, "text", "") or ""
 
-        # Defensive language field access
-        detected_language = getattr(transcript, "language", None)
-        if not detected_language:
-            detected_language = getattr(transcript, "language_code", None) or "unknown"
+        # diarized utterances
+        segments: List[Dict[str, Any]] = []
+        for utt in getattr(transcript, "utterances", []) or []:
+            segments.append({
+                "start": float((utt.start or 0) / 1000.0),
+                "end": float((utt.end or 0) / 1000.0),
+                "speaker": utt.speaker or "SPEAKER_0",
+                "text": utt.text or ""
+            })
 
-        # Translation text (field name may vary by SDK version)
-        english_text = getattr(transcript, "translation_text", None)
-        if not english_text:
-            # Some versions keep translations under .translation or .translations
-            english_text = getattr(transcript, "translation", None) or "N/A"
+        # language may be 'language' or 'language_code' or absent
+        detected_language = getattr(transcript, "language", None) \
+                            or getattr(transcript, "language_code", None) \
+                            or "unknown"
+
+        duration = getattr(transcript, "audio_duration", 0.0) or 0.0
 
         return {
-            "status": "success",
-            "engine": "assemblyai",
-            "original_text": transcript.text or "",
-            "english_text": english_text if isinstance(english_text, str) else "N/A",
-            "segments": segments,
+            "provider": "assemblyai",
+            "model": "default",
             "language": detected_language,
-            "duration": getattr(transcript, "audio_duration", 0),
-            "error_message": None,
+            "original_text": text,
+            "segments": segments,
+            "duration": float(duration),
+            "intelligence": None,    # AssemblyAI 'analysis' kept separate for now
+            "summary": None,         # Add later if you enable summarization in cfg
+            "diarization_supported": True,
+            "error_message": None
+        }
+
+    except Exception as e:
+        return {
+            "provider": "assemblyai",
+            "model": "default",
+            "language": "unknown",
+            "original_text": "",
+            "segments": [],
+            "duration": 0.0,
+            "intelligence": None,
+            "summary": None,
+            "diarization_supported": True,
+            "error_message": str(e)
         }
     except Exception as e:
         return {"status": "error", "engine": "assemblyai", "error_message": str(e)}
 # ======================================================================================
 # ENGINE 4: Deepgram (All-in-One)
 # ======================================================================================
-def _process_with_deepgram(file_name: str, file_content: bytes) -> Dict:
-    """Deepgram: transcription + diarization + optional English translation."""
+def transcribe_deepgram(audio_bytes: bytes, *, enable_intelligence: bool = False) -> Dict[str, Any]:
+    """
+    Deepgram nova-3 transcription with auto language detection and diarization.
+    If enable_intelligence=True, also returns summary/topics/intents/sentiment when available.
+    """
     try:
         api_key = st.secrets.get("DEEPGRAM_API_KEY")
         if not api_key:
-            raise ValueError("Deepgram API key not found.")
+            raise ValueError("Deepgram API key not found in st.secrets['DEEPGRAM_API_KEY'].")
 
         dg = DeepgramClient(api_key)
 
-        # v3 SDK path uses 'transcription.prerecorded(...)'
-        source = {"buffer": file_content}  # or FileSource(buffer=file_content)
+        payload: FileSource = {"buffer": audio_bytes}
 
-        options = PrerecordedOptions(
+        opts = PrerecordedOptions(
             model="nova-3",
             smart_format=True,
             punctuate=True,
-            utterances=True,      # utterance segmentation
-            diarize=True,         # speaker diarization
-            detect_language=True, # auto language detection
-            translate=True,       # enable translation
-            target_lang="en"      # translate to English
+            utterances=True,       # segmentation
+            diarize=True,          # speaker diarization
+            detect_language=True   # auto language detection
         )
 
-        res = dg.transcription.prerecorded(source, options)
-        result = res.to_dict()
+        # Optionally enable Intelligence features for testing
+        if enable_intelligence:
+            opts.summarize = "v2"
+            opts.intents = True
+            opts.topics = True
+            opts.sentiment = True
 
-        # Primary transcript (English if translate=True)
-        ch = (result.get("results", {}).get("channels") or [{}])[0]
-        alt = (ch.get("alternatives") or [{}])[0]
-        english_text = alt.get("transcript", "") or ""
+        # Use the v("1") path consistent with Deepgram’s Intelligence guide
+        resp = dg.listen.prerecorded.v("1").transcribe_file(payload, opts)
+        result = resp.to_dict()
 
-        # Utterance-level segments with speakers
-        segments_en = []
-        for utt in (result.get("results", {}).get("utterances") or []):
-            # Some payloads include per-utterance translation; if not, use utterance transcript
-            seg_text = utt.get("translation") or utt.get("transcript") or ""
-            segments_en.append({
-                "start": utt.get("start", 0.0),
-                "end":   utt.get("end", 0.0),
-                "text":  seg_text,
-                "speaker": f"SPEAKER_{utt.get('speaker', 0)}"
-            })
+        results = result.get("results", {})
+        channels = results.get("channels", []) or [{}]
+        ch0 = channels[0]
+        alts = ch0.get("alternatives", []) or [{}]
+        alt0 = alts[0]
 
-        detected_language = ch.get("detected_language") or alt.get("language") or "unknown"
+        original_text = alt0.get("transcript", "") or ""
+        detected_language = ch0.get("detected_language") or alt0.get("language") or "unknown"
         duration = result.get("metadata", {}).get("duration", 0.0)
 
+        # diarized utterances
+        segments: List[Dict[str, Any]] = []
+        for utt in results.get("utterances", []) or []:
+            segments.append({
+                "start": float(utt.get("start", 0.0)),
+                "end": float(utt.get("end", 0.0)),
+                "speaker": f"SPEAKER_{utt.get('speaker', 0)}",
+                "text": utt.get("transcript", "") or ""
+            })
+
+        intelligence = None
+        if enable_intelligence:
+            intelligence = {
+                "summary": results.get("summary"),
+                "topics": results.get("topics"),
+                "intents": results.get("intents"),
+                "sentiment": results.get("sentiment"),
+            }
+
         return {
-            "status": "success",
-            "engine": "deepgram",
-            "original_text": "N/A - Translation enabled",  # if you want both, run a non-translate pass too
-            "english_text": english_text,
-            "segments": segments_en,
+            "provider": "deepgram",
+            "model": "nova-3",
             "language": detected_language,
-            "duration": duration,
+            "original_text": original_text,
+            "segments": segments,
+            "duration": float(duration) if duration else 0.0,
+            "intelligence": intelligence,     # None if not requested
+            "summary": None,                  # reserved for other engines
+            "diarization_supported": True,
             "error_message": None
+        }
+
+    except Exception as e:
+        return {
+            "provider": "deepgram",
+            "model": "nova-3",
+            "language": "unknown",
+            "original_text": "",
+            "segments": [],
+            "duration": 0.0,
+            "intelligence": None,
+            "summary": None,
+            "diarization_supported": True,
+            "error_message": str(e)
         }
     except Exception as e:
         return {"status": "error", "engine": "deepgram", "error_message": str(e)}
