@@ -5,5 +5,5 @@ pandas
 tqdm
 google-generativeai
 plotly
-assemblyai~=0.31
-deepgram-sdk~=3.3
+deepgram-sdk>=3.11,<4.0
+assemblyai>=0.30,<0.40
