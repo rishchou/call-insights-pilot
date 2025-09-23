@@ -6,4 +6,4 @@ tqdm
 google-generativeai
 plotly
 assemblyai
-deepgram-sdk
+deepgram-sdk>=3.5.0
