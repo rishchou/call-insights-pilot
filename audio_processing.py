@@ -58,7 +58,64 @@ def _validate_audio_file(file_name: str, file_content: bytes) -> Dict[str, any]:
         vr["valid"] = False
         vr["errors"].append(f"File size exceeds limit")
     return vr
+def _guess_lang_from_text(txt: str) -> str:
+    if not txt:
+        return "unknown"
+    # Arabic script range
+    if re.search(r'[\u0600-\u06FF]', txt):
+        return "ar"
+    # quick French diacritics hint (very naive)
+    if re.search(r'[àâçéèêëîïôûùüÿœæ]', txt, flags=re.IGNORECASE):
+        return "fr"
+    if re.search(r'[A-Za-z]', txt):
+        return "en"
+    return "unknown"
 
+def _normalize_speakers(segments: List[Dict[str, Any]]):
+    """Map engine-specific speaker ids to SPEAKER_0/1/2… consistently."""
+    mapping, next_id = {}, 0
+    out = []
+    for s in segments:
+        raw = str(s.get("speaker", "UNK"))
+        if raw not in mapping:
+            mapping[raw] = f"SPEAKER_{next_id}"
+            next_id += 1
+        out.append({**s, "speaker": mapping[raw]})
+    return out, mapping
+
+def summarize_diarization(segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Simple turns/talk-time/interruptions/silence metrics."""
+    if not segments:
+        return {"turns": 0, "talk_time": {}, "talk_ratio": {}, "interruptions": 0, "avg_silence": 0.0}
+
+    total_by_spk, turns, interruptions = {}, 0, 0
+    last_spk, prev_end = None, 0.0
+    silences = []
+
+    for s in segments:
+        spk = s.get("speaker") or "SPEAKER_0"
+        dur = max(0.0, float(s.get("end", 0.0)) - float(s.get("start", 0.0)))
+        total_by_spk[spk] = total_by_spk.get(spk, 0.0) + dur
+
+        # turn change
+        if spk != last_spk:
+            if last_spk is not None:
+                # overlap -> interruption
+                if float(s.get("start", 0.0)) < prev_end - 0.1:
+                    interruptions += 1
+                # gap -> silence
+                if float(s.get("start", 0.0)) > prev_end:
+                    silences.append(float(s.get("start", 0.0)) - prev_end)
+            turns += 1
+            last_spk = spk
+
+        prev_end = max(prev_end, float(s.get("end", 0.0)))
+
+    total = sum(total_by_spk.values()) or 1.0
+    talk_ratio = {spk: secs / total for spk, secs in total_by_spk.items()}
+    avg_silence = sum(silences) / len(silences) if silences else 0.0
+    return {"turns": turns, "talk_time": total_by_spk, "talk_ratio": talk_ratio,
+            "interruptions": interruptions, "avg_silence": avg_silence}
 # ======================================================================================
 # ENGINE 1: Whisper + Gemini (Your Baseline)
 # ======================================================================================
@@ -170,6 +227,7 @@ def transcribe_assemblyai(audio_bytes: bytes) -> Dict[str, Any]:
         if not api_key:
             raise ValueError("AssemblyAI API key not found in st.secrets['ASSEMBLYAI_API_KEY'].")
 
+        # Use the alias you imported: `import assemblyai as aai`
         aai.settings.api_key = api_key
         transcriber = aai.Transcriber()
         cfg = aai.TranscriptionConfig(
@@ -190,17 +248,28 @@ def transcribe_assemblyai(audio_bytes: bytes) -> Dict[str, Any]:
         for utt in getattr(transcript, "utterances", []) or []:
             segments.append({
                 "start": float((utt.start or 0) / 1000.0),
-                "end": float((utt.end or 0) / 1000.0),
+                "end":   float((utt.end or 0) / 1000.0),
                 "speaker": utt.speaker or "SPEAKER_0",
-                "text": utt.text or ""
+                "text":  utt.text or ""
             })
 
-        # language may be 'language' or 'language_code' or absent
-        detected_language = getattr(transcript, "language", None) \
-                            or getattr(transcript, "language_code", None) \
-                            or "unknown"
+        # --- robust language extraction ---
+        detected_language = (
+            getattr(transcript, "language", None)
+            or getattr(transcript, "language_code", None)
+        )
 
-        duration = getattr(transcript, "audio_duration", 0.0) or 0.0
+        raw = getattr(transcript, "json_response", None) or getattr(transcript, "_response", None)
+        if isinstance(raw, dict):
+            detected_language = detected_language or raw.get("language_code") or raw.get("language")
+
+        detected_language = detected_language or _guess_lang_from_text(text)
+
+        duration = float(getattr(transcript, "audio_duration", 0.0) or 0.0)
+
+        # normalize speakers + add basic diarization metrics
+        segments, speaker_map = _normalize_speakers(segments)
+        metrics = summarize_diarization(segments)
 
         return {
             "provider": "assemblyai",
@@ -208,10 +277,12 @@ def transcribe_assemblyai(audio_bytes: bytes) -> Dict[str, Any]:
             "language": detected_language,
             "original_text": text,
             "segments": segments,
-            "duration": float(duration),
-            "intelligence": None,    # AssemblyAI 'analysis' kept separate for now
-            "summary": None,         # Add later if you enable summarization in cfg
+            "duration": duration,
+            "intelligence": None,       # keep analysis separate
+            "summary": None,            # add later if you enable summarization
             "diarization_supported": True,
+            "diarization_metrics": metrics,
+            "speaker_map": speaker_map,
             "error_message": None
         }
 
@@ -226,10 +297,10 @@ def transcribe_assemblyai(audio_bytes: bytes) -> Dict[str, Any]:
             "intelligence": None,
             "summary": None,
             "diarization_supported": True,
+            "diarization_metrics": {"turns":0,"talk_time":{},"talk_ratio":{},"interruptions":0,"avg_silence":0.0},
+            "speaker_map": {},
             "error_message": str(e)
         }
-    except Exception as e:
-        return {"status": "error", "engine": "assemblyai", "error_message": str(e)}
 # ======================================================================================
 # ENGINE 4: Deepgram (All-in-One)
 # ======================================================================================
@@ -245,6 +316,7 @@ def transcribe_deepgram(audio_bytes: bytes, *, enable_intelligence: bool = False
 
         dg = DeepgramClient(api_key)
 
+        # If you didn't import FileSource, drop the annotation: payload = {"buffer": audio_bytes}
         payload: FileSource = {"buffer": audio_bytes}
 
         opts = PrerecordedOptions(
@@ -255,37 +327,51 @@ def transcribe_deepgram(audio_bytes: bytes, *, enable_intelligence: bool = False
             diarize=True,          # speaker diarization
             detect_language=True   # auto language detection
         )
+        # Optional hint if your calls code-switch a lot:
+        # opts.language = "multi"
 
-        # Optionally enable Intelligence features for testing
         if enable_intelligence:
             opts.summarize = "v2"
             opts.intents = True
             opts.topics = True
             opts.sentiment = True
 
-        # Use the v("1") path consistent with Deepgram’s Intelligence guide
+        # v("1") path per DG Intelligence guide
         resp = dg.listen.prerecorded.v("1").transcribe_file(payload, opts)
         result = resp.to_dict()
 
-        results = result.get("results", {})
+        results = result.get("results", {}) or {}
         channels = results.get("channels", []) or [{}]
         ch0 = channels[0]
         alts = ch0.get("alternatives", []) or [{}]
         alt0 = alts[0]
 
         original_text = alt0.get("transcript", "") or ""
-        detected_language = ch0.get("detected_language") or alt0.get("language") or "unknown"
-        duration = result.get("metadata", {}).get("duration", 0.0)
 
-        # diarized utterances
+        # Robust language detection with fallbacks + final script guess
+        detected_language = (
+            ch0.get("detected_language")
+            or alt0.get("language")
+            or result.get("metadata", {}).get("detected_language")
+            or _guess_lang_from_text(original_text)
+        )
+
+        duration = float(result.get("metadata", {}).get("duration", 0.0) or 0.0)
+
+        # Diarized utterances
         segments: List[Dict[str, Any]] = []
         for utt in results.get("utterances", []) or []:
             segments.append({
                 "start": float(utt.get("start", 0.0)),
-                "end": float(utt.get("end", 0.0)),
-                "speaker": f"SPEAKER_{utt.get('speaker', 0)}",
-                "text": utt.get("transcript", "") or ""
+                "end":   float(utt.get("end", 0.0)),
+                # keep raw speaker id; we'll normalize to SPEAKER_n below
+                "speaker": utt.get("speaker", 0),
+                "text":   utt.get("transcript", "") or ""
             })
+
+        # Normalize speakers + add diarization metrics
+        segments, speaker_map = _normalize_speakers(segments)
+        metrics = summarize_diarization(segments)
 
         intelligence = None
         if enable_intelligence:
@@ -302,10 +388,12 @@ def transcribe_deepgram(audio_bytes: bytes, *, enable_intelligence: bool = False
             "language": detected_language,
             "original_text": original_text,
             "segments": segments,
-            "duration": float(duration) if duration else 0.0,
-            "intelligence": intelligence,     # None if not requested
-            "summary": None,                  # reserved for other engines
+            "duration": duration,
+            "intelligence": intelligence,   # None if not requested
+            "summary": None,
             "diarization_supported": True,
+            "diarization_metrics": metrics,
+            "speaker_map": speaker_map,
             "error_message": None
         }
 
@@ -320,10 +408,10 @@ def transcribe_deepgram(audio_bytes: bytes, *, enable_intelligence: bool = False
             "intelligence": None,
             "summary": None,
             "diarization_supported": True,
+            "diarization_metrics": {"turns":0,"talk_time":{},"talk_ratio":{},"interruptions":0,"avg_silence":0.0},
+            "speaker_map": {},
             "error_message": str(e)
         }
-    except Exception as e:
-        return {"status": "error", "engine": "deepgram", "error_message": str(e)}
 # ======================================================================================
 # CACHED ROUTER FUNCTION
 # ======================================================================================
