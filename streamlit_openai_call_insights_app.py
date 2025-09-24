@@ -199,12 +199,12 @@ def page_call_analysis(selected_engines: List[str]):
     else:
         st.error("Failed")
         st.caption(result.get("error_message"))
-            st.markdown("---")
-            if st.button("🧹 Clear ALL Files & Results"):
-                st.session_state.files_metadata.clear()
-                st.session_state.transcription_results.clear()
-                st.session_state.analysis_results.clear()
-                st.rerun()
+        st.markdown("---")
+        if st.button("🧹 Clear ALL Files & Results"):
+            st.session_state.files_metadata.clear()
+            st.session_state.transcription_results.clear()
+            st.session_state.analysis_results.clear()
+            st.rerun()
 
     with analyze_tab:
         st.subheader("2) Configure & Run Analysis")
