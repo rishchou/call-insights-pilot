@@ -196,9 +196,9 @@ def page_call_analysis(selected_engines: List[str]):
         with st.expander("📝 AssemblyAI Summary"):
             st.write(result["summary"])
 
-else:
-    st.error("Failed")
-    st.caption(result.get("error_message"))
+    else:
+        st.error("Failed")
+        st.caption(result.get("error_message"))
             st.markdown("---")
             if st.button("🧹 Clear ALL Files & Results"):
                 st.session_state.files_metadata.clear()
