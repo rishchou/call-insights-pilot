@@ -136,14 +136,69 @@ def page_call_analysis(selected_engines: List[str]):
                         with cols[i]:
                             st.markdown(f"##### Engine: `{engine_name}`")
                             if result.get("status") == "success":
-                                st.success("Success")
-                                st.text(f"Language: {result.get('language', 'N/A')}")
-                                st.text(f"Duration: {result.get('duration', 0):.1f}s")
-                                transcript_snippet = result.get('english_text') or result.get('original_text', '')
-                                st.text_area("Transcript Snippet", transcript_snippet[:200] + "...", height=150, key=f"snippet_{filename}_{engine_name}")
-                            else:
-                                st.error("Failed")
-                                st.caption(result.get('error_message'))
+    st.success("Success")
+    st.text(f"Language: {result.get('language', 'N/A')}")
+    st.text(f"Duration: {result.get('duration', 0):.1f}s")
+
+    # Transcript snippet (prefer english_text if you later add a translator)
+    snippet_src = result.get("english_text") or result.get("original_text", "")
+    snippet = snippet_src[:200] + ("..." if len(snippet_src) > 200 else "")
+    st.text_area("Transcript Snippet", snippet, height=150, key=f"snippet_{filename}_{engine_name}")
+
+    # ---------------- Speakers (Diarization) ----------------
+    segs = result.get("segments") or []
+    with st.expander("🗣️ Speakers (Diarization)"):
+        if segs:
+            df_rows = [{
+                "Start (s)": round(float(s.get("start", 0.0)), 2),
+                "End (s)": round(float(s.get("end", 0.0)), 2),
+                "Speaker": s.get("speaker", ""),
+                "Text": (s.get("text", "")[:160] + ("…" if len(s.get("text", "")) > 160 else ""))
+            } for s in segs]
+            st.dataframe(pd.DataFrame(df_rows), use_container_width=True, hide_index=True)
+
+            # quick metrics (returned by your updated audio_processing)
+            m = result.get("diarization_metrics") or {}
+            if m:
+                st.caption(
+                    f"Turns: {m.get('turns',0)} • "
+                    f"Interruptions: {m.get('interruptions',0)} • "
+                    f"Avg silence: {m.get('avg_silence',0.0):.2f}s"
+                )
+                # talk share progress bars
+                for spk, ratio in (m.get("talk_ratio") or {}).items():
+                    # clamp 0..1 for safety
+                    ratio = max(0.0, min(1.0, float(ratio)))
+                    st.progress(ratio, text=f"{spk}: {ratio:.0%}")
+        else:
+            st.info("No diarization segments returned by this engine.")
+
+    # ---------------- Engine-specific extras ----------------
+    # Deepgram Intelligence (only if enabled in audio_processing)
+    intel = result.get("intelligence")
+    if intel:
+        with st.expander("🧠 Deepgram Intelligence"):
+            if intel.get("summary") is not None:
+                st.subheader("Summary")
+                st.write(intel["summary"])
+            if intel.get("topics"):
+                st.subheader("Topics")
+                st.table([{"topic": t.get("topic"), "conf": t.get("confidence")} for t in intel["topics"]])
+            if intel.get("intents"):
+                st.subheader("Intents")
+                st.table([{"intent": i.get("intent"), "conf": i.get("confidence")} for i in intel["intents"]])
+            if intel.get("sentiment"):
+                st.subheader("Sentiment")
+                st.json(intel["sentiment"])
+
+    # AssemblyAI summary (will be None until you enable summarization in cfg)
+    if result.get("summary") is not None:
+        with st.expander("📝 AssemblyAI Summary"):
+            st.write(result["summary"])
+
+else:
+    st.error("Failed")
+    st.caption(result.get("error_message"))
             st.markdown("---")
             if st.button("🧹 Clear ALL Files & Results"):
                 st.session_state.files_metadata.clear()
