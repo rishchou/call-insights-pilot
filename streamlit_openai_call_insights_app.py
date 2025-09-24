@@ -136,9 +136,9 @@ def page_call_analysis(selected_engines: List[str]):
                         with cols[i]:
                             st.markdown(f"##### Engine: `{engine_name}`")
                             if result.get("status") == "success":
-    st.success("Success")
-    st.text(f"Language: {result.get('language', 'N/A')}")
-    st.text(f"Duration: {result.get('duration', 0):.1f}s")
+                                st.success("Success")
+                                st.text(f"Language: {result.get('language', 'N/A')}")
+                                st.text(f"Duration: {result.get('duration', 0):.1f}s")
 
     # Transcript snippet (prefer english_text if you later add a translator)
     snippet_src = result.get("english_text") or result.get("original_text", "")
