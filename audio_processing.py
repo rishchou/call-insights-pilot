@@ -1,546 +1,895 @@
-# audio_processing.py
+import os
+
 import io
+
 import json
+
 import hashlib
-import time
-import re
-from functools import lru_cache
-from typing import Any, Dict, List, Optional
 
 import streamlit as st
+
 from openai import OpenAI
+
 import google.generativeai as genai
 
-# SDKs for the new engines
-# from gladia import GladiaClient
-import assemblyai as aai
-from deepgram import DeepgramClient, PrerecordedOptions
+from typing import Dict, List, Optional, Tuple
+
+from functools import lru_cache
+
+import time
+
+import re
+
+import json
+
+from google.cloud import speech
+
+
 
 # ======================================================================================
-# CONSTANTS
+
+# CONSTANTS AND CONFIGURATION
+
 # ======================================================================================
-MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
+
+
+
+MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB - Whisper's typical limit
+
 SUPPORTED_FORMATS = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'webm']
+
+
+
 WHISPER_MODEL = "whisper-1"
+
 GEMINI_MODEL = "gemini-1.5-pro"
-GEMINI_TIMEOUT = 30  # seconds
+
+
+
+GEMINI_TIMEOUT = 30  # seconds
+
+MAX_RETRIES = 3
+
+
 
 # ======================================================================================
-# CLIENT INITIALIZATION & UTILITIES
+
+# LAZY CLIENT INITIALIZATION
+
 # ======================================================================================
+
+
+
 @lru_cache(maxsize=1)
+
 def _get_openai_client() -> Optional[OpenAI]:
-    api_key = st.secrets.get("OPENAI_API_KEY")
-    if not api_key: return None
-    return OpenAI(api_key=api_key)
+
+"""Lazy initialization of OpenAI client."""
+
+api_key = st.secrets.get("OPENAI_API_KEY")
+
+if not api_key:
+
+st.warning("OpenAI API key not found. Audio transcription will not work.")
+
+return None
+
+try:
+
+return OpenAI(api_key=api_key)
+
+except Exception as e:
+
+st.error(f"OpenAI client initialization failed: {e}")
+
+return None
+
+
 
 @lru_cache(maxsize=1)
+
 def _get_gemini_model():
-    api_key = st.secrets.get("GEMINI_API_KEY")
-    if not api_key: return None
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel(GEMINI_MODEL, generation_config={"response_mime_type": "application/json"})
+
+"""Lazy initialization of Gemini model."""
+
+api_key = st.secrets.get("GEMINI_API_KEY")
+
+if not api_key:
+
+st.warning("Gemini API key not found. Speaker labeling will not work.")
+
+return None
+
+try:
+
+genai.configure(api_key=api_key)
+
+return genai.GenerativeModel(
+
+GEMINI_MODEL,
+
+generation_config={"response_mime_type": "application/json"}
+
+)
+
+except Exception as e:
+
+st.error(f"Gemini client initialization failed: {e}")
+
+return None
+
+
+
+# ======================================================================================
+
+# UTILITY FUNCTIONS
+
+# ======================================================================================
+
+
 
 def _calculate_file_hash(file_content: bytes) -> str:
-    return hashlib.md5(file_content).hexdigest()
+
+"""Calculate hash of file content for caching."""
+
+return hashlib.md5(file_content).hexdigest()
+
+
 
 def _scrub_pii(text: str) -> str:
-    if not isinstance(text, str): return text
-    text = re.sub(r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b', '[CARD_REDACTED]', text)
-    text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', '[EMAIL_REDACTED]', text)
-    return text
+
+"""Basic PII scrubbing for production safety."""
+
+if not isinstance(text, str):
+
+return text
+
+# Phone numbers
+
+text = re.sub(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '[PHONE_REDACTED]', text)
+
+# Email addresses
+
+text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', '[EMAIL_REDACTED]', text)
+
+# Credit card patterns (basic)
+
+text = re.sub(r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b', '[CARD_REDACTED]', text)
+
+# Emirates ID pattern
+
+text = re.sub(r'\b784-\d{4}-\d{7}-\d{1}\b', '[EMIRATES_ID_REDACTED]', text)
+
+return text
+
+
 
 def _validate_audio_file(file_name: str, file_content: bytes) -> Dict[str, any]:
-    vr = {"valid": True, "errors": [], "warnings": [], "file_info": {}}
-    size = len(file_content)
-    vr["file_info"]["size_mb"] = round(size / (1024 * 1024), 2)
-    if size > MAX_FILE_SIZE:
-        vr["valid"] = False
-        vr["errors"].append(f"File size exceeds limit")
-    return vr
-def _guess_lang_from_text(txt: str) -> str:
-    if not txt:
-        return "unknown"
-    # Arabic script range
-    if re.search(r'[\u0600-\u06FF]', txt):
-        return "ar"
-    # quick French diacritics hint (very naive)
-    if re.search(r'[àâçéèêëîïôûùüÿœæ]', txt, flags=re.IGNORECASE):
-        return "fr"
-    if re.search(r'[A-Za-z]', txt):
-        return "en"
-    return "unknown"
 
-def _normalize_speakers(segments: List[Dict[str, Any]]):
-    """Map engine-specific speaker ids to SPEAKER_0/1/2… consistently."""
-    mapping, next_id = {}, 0
-    out = []
-    for s in segments:
-        raw = str(s.get("speaker", "UNK"))
-        if raw not in mapping:
-            mapping[raw] = f"SPEAKER_{next_id}"
-            next_id += 1
-        out.append({**s, "speaker": mapping[raw]})
-    return out, mapping
+"""Validate audio file before processing."""
 
-def summarize_diarization(segments: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Simple turns/talk-time/interruptions/silence metrics."""
-    if not segments:
-        return {"turns": 0, "talk_time": {}, "talk_ratio": {}, "interruptions": 0, "avg_silence": 0.0}
+validation_result = {
 
-    total_by_spk, turns, interruptions = {}, 0, 0
-    last_spk, prev_end = None, 0.0
-    silences = []
+"valid": True,
 
-    for s in segments:
-        spk = s.get("speaker") or "SPEAKER_0"
-        dur = max(0.0, float(s.get("end", 0.0)) - float(s.get("start", 0.0)))
-        total_by_spk[spk] = total_by_spk.get(spk, 0.0) + dur
+"errors": [],
 
-        # turn change
-        if spk != last_spk:
-            if last_spk is not None:
-                # overlap -> interruption
-                if float(s.get("start", 0.0)) < prev_end - 0.1:
-                    interruptions += 1
-                # gap -> silence
-                if float(s.get("start", 0.0)) > prev_end:
-                    silences.append(float(s.get("start", 0.0)) - prev_end)
-            turns += 1
-            last_spk = spk
+"warnings": [],
 
-        prev_end = max(prev_end, float(s.get("end", 0.0)))
+"file_info": {}
 
-    total = sum(total_by_spk.values()) or 1.0
-    talk_ratio = {spk: secs / total for spk, secs in total_by_spk.items()}
-    avg_silence = sum(silences) / len(silences) if silences else 0.0
-    return {"turns": turns, "talk_time": total_by_spk, "talk_ratio": talk_ratio,
-            "interruptions": interruptions, "avg_silence": avg_silence}
-# ======================================================================================
-# ENGINE 1: Whisper + Gemini (Your Baseline)
-# ======================================================================================
-def _label_speakers_batch(segments: List) -> List[Dict]:
-    """Labels speakers from text segments using Gemini."""
-    model = _get_gemini_model()
-    if not model:
-        st.warning("Gemini model not available. Falling back to alternating speaker labels.")
-        labeled_fallback = []
-        for i, seg in enumerate(segments):
-            labeled_fallback.append({
-                "id": i, "speaker": "AGENT" if i % 2 == 0 else "CUSTOMER",
-                "text": getattr(seg, 'text', ''), "start": getattr(seg, 'start', 0), "end": getattr(seg, 'end', 0)
-            })
-        return labeled_fallback
+}
 
-    all_labeled = []
-    # (Full original logic for batching and prompting Gemini)
-    for i in range(0, len(segments), 20):
-        batch = segments[i:i + 20]
-        prompt_segments = [{"id": i+j, "text": getattr(s, 'text', '')} for j, s in enumerate(batch)]
-        prompt = f"""You are a conversation analyst. Identify the speaker for each segment as "AGENT" or "CUSTOMER".
-        Rules: The first speaker is usually the AGENT. "Thank you for calling" indicates AGENT. "I have a problem" indicates CUSTOMER.
-        Segments: {json.dumps(prompt_segments)}
-        Return ONLY a single valid JSON object: {{"labels":[{{"id": <int>, "speaker": "AGENT|CUSTOMER"}}]}}"""
-        
-        label_map = {}
-        try:
-            resp = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT})
-            data = json.loads(getattr(resp, "text", "") or "{}")
-            if "labels" in data:
-                for item in data["labels"]:
-                    label_map[item["id"]] = item["speaker"]
-        except Exception as e:
-            st.warning(f"Gemini speaker labeling failed for a batch: {e}")
 
-        for j, seg in enumerate(batch):
-            idx = i + j
-            labeled_segment = {
-                "id": idx,
-                "speaker": label_map.get(idx, "AGENT" if idx % 2 == 0 else "CUSTOMER"),
-                "text": getattr(seg, 'text', ''),
-                "start": getattr(seg, 'start', 0),
-                "end": getattr(seg, 'end', 0)
-            }
-            all_labeled.append(labeled_segment)
-        return all_labeled
 
-def _process_with_whisper_gemini(file_name: str, file_content: bytes) -> Dict:
-    """Original pipeline using Whisper STT/Translate and Gemini diarization."""
-    try:
-        oai_client = _get_openai_client()
-        if not oai_client: raise ValueError("OpenAI client not available.")
-        
-        audio_file = io.BytesIO(file_content); audio_file.name = file_name
-        original_transcript = oai_client.audio.transcriptions.create(model=WHISPER_MODEL, file=audio_file, response_format="verbose_json")
-        audio_file.seek(0)
-        english_transcript = oai_client.audio.translations.create(model=WHISPER_MODEL, file=audio_file, response_format="verbose_json")
-        
-        labeled_segments = _label_speakers_batch(english_transcript.segments or [])
-        
-        return {
-            "status": "success", "engine": "whisper_gemini",
-            "original_text": original_transcript.text,
-            "english_text": english_transcript.text,
-            "segments": labeled_segments,
-            "language": original_transcript.language,
-            "duration": english_transcript.duration, "error_message": None
-        }
-    except Exception as e:
-        return {"status": "error", "engine": "whisper_gemini", "error_message": str(e)}
+# Size checks
+
+file_size = len(file_content)
+
+validation_result["file_info"]["size_mb"] = round(file_size / (1024 * 1024), 2)
+
+
+
+if file_size > MAX_FILE_SIZE:
+
+validation_result["valid"] = False
+
+validation_result["errors"].append(
+
+f"File size ({validation_result['file_info']['size_mb']}MB) exceeds limit ({MAX_FILE_SIZE // (1024*1024)}MB)"
+
+)
+
+
+
+if file_size < 1024:  # Less than 1KB
+
+validation_result["valid"] = False
+
+validation_result["errors"].append("File appears to be too small to contain audio data")
+
+
+
+# Extension checks
+
+file_extension = file_name.lower().split('.')[-1] if '.' in file_name else ''
+
+validation_result["file_info"]["format"] = file_extension
+
+
+
+if file_extension not in SUPPORTED_FORMATS:
+
+validation_result["valid"] = False
+
+validation_result["errors"].append(
+
+f"Unsupported file format: {file_extension}. Supported: {', '.join(SUPPORTED_FORMATS)}"
+
+)
+
+
+
+if file_size > 10 * 1024 * 1024:  # > 10MB
+
+validation_result["warnings"].append("Large file - processing may take several minutes")
+
+
+
+return validation_result
+
+
+
+def _json_guard(text_response: str) -> dict:
+
+"""Safely parse JSON response with better error handling (handles code fences)."""
+
+if not text_response or not text_response.strip():
+
+return {"error": "Empty response from AI model"}
+
+t = text_response.strip().strip('`')
+
+try:
+
+return json.loads(t)
+
+except json.JSONDecodeError:
+
+start = t.find('{'); end = t.rfind('}')
+
+if start != -1 and end != -1 and end > start:
+
+try:
+
+return json.loads(t[start:end+1])
+
+except json.JSONDecodeError:
+
+pass
+
+return {
+
+"error": "Failed to parse AI response as JSON",
+
+"raw_response": t[:500] + ("..." if len(t) > 500 else "")
+
+}
+
+
 
 # ======================================================================================
-# ENGINE 2: Gladia (All-in-One)
-# ======================================================================================
-# def _process_with_gladia(file_name: str, file_content: bytes) -> Dict:
-#    """Processes audio using Gladia's full potential."""
-#    try:
-#        api_key = st.secrets.get("GLADIA_API_KEY")
-#        if not api_key: raise ValueError("Gladia API key not found.")
-#        client = GladiaClient(api_key)
-#        response = client.audio.transcription.create(audio_bytes=file_content, diarization=True, translation=True, target_translation_language="en")
-#
-#        segments_en = []
-#        if response.translation and response.translation.utterances:
-#            for utt in response.translation.utterances:
-#               segments_en.append({"start": utt.start, "end": utt.end, "text": utt.transcription, "speaker": f"SPEAKER_{utt.speaker}"})
-#        
-#        return {
-#            "status": "success", "engine": "gladia",
-#            "original_text": response.transcription.full_transcript,
-#            "english_text": response.translation.full_transcript,
-#            "segments": segments_en,
-#            "language": response.language, "duration": response.duration, "error_message": None
-#        }
-#    except Exception as e:
-#        return {"status": "error", "engine": "gladia", "error_message": str(e)}
+
+# CORE PROCESSING FUNCTIONS
 
 # ======================================================================================
-# ENGINE 3: AssemblyAI (All-in-One)
+
+
+
+def _transcribe_audio_original(file_name: str, file_content: bytes) -> Dict:
+
+"""Transcribe audio in original language."""
+
+oai_client = _get_openai_client()
+
+if not oai_client:
+
+return {"error": "OpenAI client not available"}
+
+
+
+for attempt in range(MAX_RETRIES):
+
+try:
+
+audio_file = io.BytesIO(file_content)
+
+audio_file.name = file_name
+
+
+
+response = oai_client.audio.transcriptions.create(
+
+model=WHISPER_MODEL,
+
+file=audio_file,
+
+response_format="verbose_json"
+
+)
+
+return {
+
+"text": getattr(response, "text", ""),
+
+"segments": getattr(response, "segments", []),
+
+"language": getattr(response, "language", None) or getattr(response, "detected_language", "unknown"),
+
+"duration": getattr(response, "duration", 0),
+
+}
+
+except Exception as e:
+
+if attempt == MAX_RETRIES - 1:
+
+return {"error": f"Original transcription failed after {MAX_RETRIES} attempts: {e}"}
+
+time.sleep(2 ** attempt)
+
+
+
+return {"error": "Original transcription failed - maximum retries exceeded"}
+
+
+
+def _translate_to_english(file_name: str, file_content: bytes) -> Dict:
+
+"""Translate audio to English."""
+
+oai_client = _get_openai_client()
+
+if not oai_client:
+
+return {"error": "OpenAI client not available"}
+
+
+
+for attempt in range(MAX_RETRIES):
+
+try:
+
+audio_file = io.BytesIO(file_content)
+
+audio_file.name = file_name
+
+
+
+response = oai_client.audio.translations.create(
+
+model=WHISPER_MODEL,
+
+file=audio_file,
+
+response_format="verbose_json"
+
+)
+
+return {
+
+"text": getattr(response, "text", ""),
+
+"segments": getattr(response, "segments", []),
+
+"language": "en",
+
+"duration": getattr(response, "duration", 0),
+
+}
+
+except Exception as e:
+
+if attempt == MAX_RETRIES - 1:
+
+return {"error": f"English translation failed after {MAX_RETRIES} attempts: {e}"}
+
+time.sleep(2 ** attempt)
+
+
+
+return {"error": "English translation failed - maximum retries exceeded"}
+
+
+
+def _label_speakers_batch(segments: List, batch_size: int = 20) -> List[Dict]:
+
+"""Label speakers with batching support, using stable local IDs."""
+
+model = _get_gemini_model()
+
+if not model:
+
+# Fallback: simple alternating pattern
+
+labeled_fallback = []
+
+for i, seg in enumerate(segments):
+
+text = seg["text"] if isinstance(seg, dict) and "text" in seg else getattr(seg, "text", str(seg))
+
+start = seg.get("start", 0) if isinstance(seg, dict) else getattr(seg, "start", 0)
+
+end = seg.get("end", 0) if isinstance(seg, dict) else getattr(seg, "end", 0)
+
+labeled_fallback.append({
+
+"id": i,
+
+"speaker": "AGENT" if i % 2 == 0 else "CUSTOMER",
+
+"text": text, "start": start, "end": end
+
+})
+
+return labeled_fallback
+
+
+
+all_labeled = []
+
+n = len(segments)
+
+for batch_start in range(0, n, batch_size):
+
+batch = segments[batch_start: batch_start + batch_size]
+
+
+
+# Build prompt batch with stable local_id we control
+
+prompt_segments = []
+
+id_map = {}  # local_id -> global index
+
+for j, seg in enumerate(batch):
+
+local_id = batch_start + j
+
+id_map[local_id] = batch_start + j
+
+text = seg["text"] if isinstance(seg, dict) and "text" in seg else getattr(seg, "text", str(seg))
+
+start = seg.get("start", 0) if isinstance(seg, dict) else getattr(seg, "start", 0)
+
+end = seg.get("end", 0) if isinstance(seg, dict) else getattr(seg, "end", 0)
+
+prompt_segments.append({"id": local_id, "text": text, "start": start, "end": end})
+
+
+
+prompt = f"""
+
+You are a conversation analyst specializing in call center interactions. Identify speakers for each segment.
+
+
+
+Rules:
+
+1) Two speakers: AGENT (company rep) and CUSTOMER.
+
+2) First speaker is usually AGENT.
+
+3) Phrases like "Thank you for calling", "How can I help", "My name is" ⇒ AGENT.
+
+4) Phrases like "I have a problem", "I need help", "Can you..." ⇒ CUSTOMER.
+
+
+
+Segments:
+
+{json.dumps(prompt_segments, indent=2)}
+
+
+
+Return ONLY JSON:
+
+{{"labels":[{{"id": <segment_id>, "speaker": "AGENT|CUSTOMER"}}]}}
+
+""".strip()
+
+
+
+label_map: Dict[int, str] = {}
+
+for attempt in range(2):
+
+try:
+
+resp = model.generate_content(prompt, request_options={"timeout": GEMINI_TIMEOUT})
+
+data = _json_guard(getattr(resp, "text", "") or "")
+
+if "error" not in data:
+
+for item in data.get("labels", []):
+
+if "id" in item and "speaker" in item:
+
+try:
+
+label_map[int(item["id"])] = item["speaker"]
+
+except Exception:
+
+continue
+
+break
+
+except Exception:
+
+if attempt == 1:
+
+break
+
+time.sleep(1)
+
+
+
+# Apply labels; fallback = alternating
+
+for local_id, global_idx in id_map.items():
+
+seg = segments[global_idx]
+
+text = seg["text"] if isinstance(seg, dict) and "text" in seg else getattr(seg, "text", str(seg))
+
+start = seg.get("start", 0) if isinstance(seg, dict) else getattr(seg, "start", 0)
+
+end = seg.get("end", 0) if isinstance(seg, dict) else getattr(seg, "end", 0)
+
+speaker = label_map.get(local_id, "AGENT" if global_idx % 2 == 0 else "CUSTOMER")
+
+
+
+all_labeled.append({
+
+"id": local_id,
+
+"speaker": speaker,
+
+"text": text,
+
+"start": start,
+
+"end": end,
+
+"seek": seg.get("seek", 0) if isinstance(seg, dict) else getattr(seg, "seek", 0),
+
+"tokens": seg.get("tokens", []) if isinstance(seg, dict) else getattr(seg, "tokens", []),
+
+"temperature": seg.get("temperature", 0.0) if isinstance(seg, dict) else getattr(seg, "temperature", 0.0),
+
+"avg_logprob": seg.get("avg_logprob", 0.0) if isinstance(seg, dict) else getattr(seg, "avg_logprob", 0.0),
+
+"compression_ratio": seg.get("compression_ratio", 0.0) if isinstance(seg, dict) else getattr(seg, "compression_ratio", 0.0),
+
+"no_speech_prob": seg.get("no_speech_prob", 0.0) if isinstance(seg, dict) else getattr(seg, "no_speech_prob", 0.0),
+
+})
+
+
+
+return all_labeled
+
+
+
 # ======================================================================================
-def transcribe_assemblyai(audio_bytes: bytes) -> Dict[str, Any]:
-    """
-    AssemblyAI transcription with auto language detection and diarization.
-    (Summarization is OFF here; you can add it later in config if needed.)
-    """
-    try:
-        api_key = st.secrets.get("ASSEMBLYAI_API_KEY")
-        if not api_key:
-            raise ValueError("AssemblyAI API key not found in st.secrets['ASSEMBLYAI_API_KEY'].")
 
-        # Use the alias you imported: `import assemblyai as aai`
-        aai.settings.api_key = api_key
-        transcriber = aai.Transcriber()
-        cfg = aai.TranscriptionConfig(
-            speaker_labels=True,       # diarization -> transcript.utterances
-            language_detection=True    # auto language detection
-        )
+# CACHED PROCESSING IMPLEMENTATION (NO RECURSION)
 
-        transcript = transcriber.transcribe(io.BytesIO(audio_bytes), cfg)
-
-        # If AssemblyAI signals failure
-        if getattr(transcript, "status", None) == aai.TranscriptStatus.error:
-            raise RuntimeError(getattr(transcript, "error", "Transcription failed."))
-
-        text = getattr(transcript, "text", "") or ""
-
-        # diarized utterances
-        segments: List[Dict[str, Any]] = []
-        for utt in getattr(transcript, "utterances", []) or []:
-            segments.append({
-                "start": float((utt.start or 0) / 1000.0),
-                "end":   float((utt.end or 0) / 1000.0),
-                "speaker": utt.speaker or "SPEAKER_0",
-                "text":  utt.text or ""
-            })
-
-        # --- robust language extraction ---
-        detected_language = (
-            getattr(transcript, "language", None)
-            or getattr(transcript, "language_code", None)
-        )
-
-        raw = getattr(transcript, "json_response", None) or getattr(transcript, "_response", None)
-        if isinstance(raw, dict):
-            detected_language = detected_language or raw.get("language_code") or raw.get("language")
-
-        detected_language = detected_language or _guess_lang_from_text(text)
-
-        duration = float(getattr(transcript, "audio_duration", 0.0) or 0.0)
-
-        # normalize speakers + add basic diarization metrics
-        segments, speaker_map = _normalize_speakers(segments)
-        metrics = summarize_diarization(segments)
-
-        return {
-            "provider": "assemblyai",
-            "model": "default",
-            "language": detected_language,
-            "original_text": text,
-            "segments": segments,
-            "duration": duration,
-            "intelligence": None,       # keep analysis separate
-            "summary": None,            # add later if you enable summarization
-            "diarization_supported": True,
-            "diarization_metrics": metrics,
-            "speaker_map": speaker_map,
-            "error_message": None
-        }
-
-    except Exception as e:
-        return {
-            "provider": "assemblyai",
-            "model": "default",
-            "language": "unknown",
-            "original_text": "",
-            "segments": [],
-            "duration": 0.0,
-            "intelligence": None,
-            "summary": None,
-            "diarization_supported": True,
-            "diarization_metrics": {"turns":0,"talk_time":{},"talk_ratio":{},"interruptions":0,"avg_silence":0.0},
-            "speaker_map": {},
-            "error_message": str(e)
-        }
 # ======================================================================================
-# ENGINE 4: Deepgram (All-in-One)
-# ======================================================================================
-def transcribe_deepgram(audio_bytes: bytes, *, enable_intelligence: bool = False) -> Dict[str, Any]:
-    """
-    Deepgram nova-3 transcription with auto language detection and diarization.
-    If enable_intelligence=True, also returns summary/topics/intents/sentiment when available.
-    """
-    try:
-        api_key = st.secrets.get("DEEPGRAM_API_KEY")
-        if not api_key:
-            raise ValueError("Deepgram API key not found in st.secrets['DEEPGRAM_API_KEY'].")
 
-        dg = DeepgramClient(api_key)
 
-        # If you didn't import FileSource, drop the annotation: payload = {"buffer": audio_bytes}
-        payload: FileSource = {"buffer": audio_bytes}
 
-        opts = PrerecordedOptions(
-            model="nova-3",
-            smart_format=True,
-            punctuate=True,
-            utterances=True,       # segmentation
-            diarize=True,          # speaker diarization
-            detect_language=True   # auto language detection
-        )
-        # Optional hint if your calls code-switch a lot:
-        # opts.language = "multi"
-
-        if enable_intelligence:
-            opts.summarize = "v2"
-            opts.intents = True
-            opts.topics = True
-            opts.sentiment = True
-
-        # v("1") path per DG Intelligence guide
-        resp = dg.listen.prerecorded.v("1").transcribe_file(payload, opts)
-        result = resp.to_dict()
-
-        results = result.get("results", {}) or {}
-        channels = results.get("channels", []) or [{}]
-        ch0 = channels[0]
-        alts = ch0.get("alternatives", []) or [{}]
-        alt0 = alts[0]
-
-        original_text = alt0.get("transcript", "") or ""
-
-        # Robust language detection with fallbacks + final script guess
-        detected_language = (
-            ch0.get("detected_language")
-            or alt0.get("language")
-            or result.get("metadata", {}).get("detected_language")
-            or _guess_lang_from_text(original_text)
-        )
-
-        duration = float(result.get("metadata", {}).get("duration", 0.0) or 0.0)
-
-        # Diarized utterances
-        segments: List[Dict[str, Any]] = []
-        for utt in results.get("utterances", []) or []:
-            segments.append({
-                "start": float(utt.get("start", 0.0)),
-                "end":   float(utt.get("end", 0.0)),
-                # keep raw speaker id; we'll normalize to SPEAKER_n below
-                "speaker": utt.get("speaker", 0),
-                "text":   utt.get("transcript", "") or ""
-            })
-
-        # Normalize speakers + add diarization metrics
-        segments, speaker_map = _normalize_speakers(segments)
-        metrics = summarize_diarization(segments)
-
-        intelligence = None
-        if enable_intelligence:
-            intelligence = {
-                "summary": results.get("summary"),
-                "topics": results.get("topics"),
-                "intents": results.get("intents"),
-                "sentiment": results.get("sentiment"),
-            }
-
-        return {
-            "provider": "deepgram",
-            "model": "nova-3",
-            "language": detected_language,
-            "original_text": original_text,
-            "segments": segments,
-            "duration": duration,
-            "intelligence": intelligence,   # None if not requested
-            "summary": None,
-            "diarization_supported": True,
-            "diarization_metrics": metrics,
-            "speaker_map": speaker_map,
-            "error_message": None
-        }
-
-    except Exception as e:
-        return {
-            "provider": "deepgram",
-            "model": "nova-3",
-            "language": "unknown",
-            "original_text": "",
-            "segments": [],
-            "duration": 0.0,
-            "intelligence": None,
-            "summary": None,
-            "diarization_supported": True,
-            "diarization_metrics": {"turns":0,"talk_time":{},"talk_ratio":{},"interruptions":0,"avg_silence":0.0},
-            "speaker_map": {},
-            "error_message": str(e)
-        }
-# ======================================================================================
-# CACHED ROUTER FUNCTION
-# ======================================================================================
 @st.cache_data(show_spinner=False)
-def _process_audio_cached(file_hash: str, file_name: str, file_content: bytes, engine: str) -> Dict:
-    """Cached router that calls the correct end-to-end processing engine."""
-    validation = _validate_audio_file(file_name, file_content)
-    if not validation["valid"]:
-        return {"status": "error", "error_message": ", ".join(validation["errors"])}
 
-    engine_map = {
-        "whisper_gemini": _process_with_whisper_gemini,
-        # "gladia": _process_with_gladia,
-        "assemblyai": _process_with_assemblyai,
-        "deepgram": _process_with_deepgram
-    }
-    process_function = engine_map.get(engine)
+def _process_audio_cached(file_hash: str, file_name: str, file_content: bytes) -> Dict:
 
-    if not process_function:
-        return {"status": "error", "engine": engine, "error_message": f"Unknown engine: {engine}"}
-    
-    result = process_function(file_name, file_content)
-    
-    if result.get("status") == "success":
-        result["original_text"] = _scrub_pii(result.get("original_text", ""))
-        result["english_text"] = _scrub_pii(result.get("english_text", ""))
-        for segment in result.get("segments", []):
-            segment["text"] = _scrub_pii(segment.get("text", ""))
-    
-    return result
+"""Cached implementation that does the actual heavy lifting."""
+
+# Step 1: Validate file
+
+validation = _validate_audio_file(file_name, file_content)
+
+if not validation["valid"]:
+
+return {
+
+"status": "error",
+
+"error": "File validation failed",
+
+"validation_errors": validation["errors"],
+
+"file_info": validation.get("file_info", {})
+
+}
+
+
+
+result = {
+
+"status": "processing",
+
+"file_hash": file_hash,
+
+"file_info": validation["file_info"],
+
+"validation_warnings": validation.get("warnings", []),
+
+}
+
+
+
+try:
+
+# Step 2: Transcribe in original language (based on selected engine)
+
+stt_engine = st.session_state.get("stt_engine", "Whisper")
+
+
+
+if stt_engine == "Google STT":
+
+try:
+
+from google_stt import transcribe as google_transcribe
+
+original_transcript = google_transcribe(file_name, file_content)
+
+except Exception as e:
+
+result["status"] = "error"
+
+result["error"] = f"Google STT transcription failed: {e}"
+
+return result
+
+else:
+
+original_transcript = _transcribe_audio_original(file_name, file_content)
+
+
+
+if "error" in original_transcript:
+
+result["status"] = "error"
+
+result["error"] = f"Original transcription failed: {original_transcript['error']}"
+
+return result
+
+
+
+
+
+# Step 3: Translate to English
+
+english_transcript = _translate_to_english(file_name, file_content)
+
+if "error" in english_transcript:
+
+result["status"] = "error"
+
+result["error"] = f"English translation failed: {english_transcript['error']}"
+
+return result
+
+
+
+# Step 4: Label speakers (on English segments)
+
+labeled_segments = _label_speakers_batch(english_transcript.get("segments", []))
+
+
+
+# Step 5: PII scrubbing
+
+scrubbed_original = _scrub_pii(original_transcript.get("text", ""))
+
+scrubbed_english = _scrub_pii(english_transcript.get("text", ""))
+
+for seg in labeled_segments:
+
+seg["text"] = _scrub_pii(seg.get("text", ""))
+
+
+
+# Step 6: Compile final result
+
+result.update({
+
+"status": "success",
+
+"original_transcript": scrubbed_original,
+
+"english_transcript": scrubbed_english,
+
+"segments": labeled_segments,
+
+"duration": english_transcript.get("duration", 0),
+
+"detected_language": original_transcript.get("language", "unknown"),
+
+"processing_metadata": {
+
+"segments_count": len(labeled_segments),
+
+"speakers_detected": len(set(s.get("speaker") for s in labeled_segments)) if labeled_segments else 0,
+
+"file_hash": file_hash,
+
+"pii_scrubbed": True
+
+}
+
+})
+
+result["engine"] = stt_engine
+
+return result
+
+
+
+except Exception as e:
+
+result["status"] = "error"
+
+result["error"] = f"Unexpected error during processing: {e}"
+
+return result
+
+
 
 # ======================================================================================
+
 # PUBLIC API FUNCTIONS
+
 # ======================================================================================
-def process_audio(file_name: str, file_content: bytes, engine: str) -> Dict:
-    """Main audio processing function."""
-    unique_hash = _calculate_file_hash(file_content) + f"_{engine}"
-    return _process_audio_cached(unique_hash, file_name, file_content, engine)
 
-def process_audio_with_progress(file_name: str, file_content: bytes, engine: str) -> Dict:
-    """Process audio with Streamlit progress indicators."""
-    progress_bar = st.progress(0, text=f"[{engine}] Starting...")
-    result = process_audio(file_name, file_content, engine)
-    if result.get("status") == "success":
-        progress_bar.progress(100, text=f"[{engine}] Complete!")
-    else:
-        st.error(f"[{engine}] Failed: {result.get('error_message', 'Unknown error')}")
-        progress_bar.progress(100, text=f"[{engine}] Failed!")
-    time.sleep(1)
-    progress_bar.empty()
-    return result
-# -------------------- helpers --------------------
 
-def _guess_mime(fname: str) -> str:
-    f = fname.lower()
-    if f.endswith(".wav"):  return "audio/wav"
-    if f.endswith(".mp3"):  return "audio/mpeg"
-    if f.endswith(".m4a"):  return "audio/mp4"
-    if f.endswith(".ogg"):  return "audio/ogg"
-    if f.endswith(".webm"): return "audio/webm"
-    return "application/octet-stream"
 
-# -------------------- main router for UI --------------------
+def process_audio(file_name: str, file_content: bytes) -> Dict:
 
-def process_audio(file_name: str, file_content: bytes, *, engine: str) -> Dict[str, Any]:
-    """
-    Router used by main_app.py. Calls the new transcribe_* funcs and returns
-    a dict that includes `status` and `english_text` so the UI works unchanged.
-    """
-    try:
-        if engine == "deepgram":
-            out = transcribe_deepgram(file_content, enable_intelligence=True)  # flip to False if you don’t want DG Intelligence now
-        elif engine == "assemblyai":
-            out = transcribe_assemblyai(file_content)
-        elif engine == "whisper_gemini":
-            # We’ll just run Whisper here (no Gemini processing in this step)
-            mime = _guess_mime(file_name)
-            out = transcribe_openai_whisper(file_content, filename=file_name, mime=mime)
-        elif engine == "gladia":
-            return {
-                "provider": "gladia",
-                "model": "",
-                "language": "unknown",
-                "original_text": "",
-                "segments": [],
-                "duration": 0.0,
-                "intelligence": None,
-                "summary": None,
-                "diarization_supported": False,
-                "engine": "gladia",
-                "status": "error",
-                "error_message": "Gladia is not wired yet in this build."
-            }
-        else:
-            return {
-                "provider": engine,
-                "model": "",
-                "language": "unknown",
-                "original_text": "",
-                "segments": [],
-                "duration": 0.0,
-                "intelligence": None,
-                "summary": None,
-                "diarization_supported": False,
-                "engine": engine,
-                "status": "error",
-                "error_message": f"Unknown engine '{engine}'."
-            }
+"""Main audio processing function - calls cached implementation."""
 
-        # Normalize for your UI (main_app.py expects these)
-        out["engine"] = engine
-        out["status"] = "error" if out.get("error_message") else "success"
-        # Until you add a translator step, show original text as snippet fallback
-        out.setdefault("english_text", out.get("original_text", ""))
+file_hash = _calculate_file_hash(file_content)
 
-        return out
+return _process_audio_cached(file_hash, file_name, file_content)
 
-    except Exception as e:
-        return {
-            "provider": engine,
-            "model": "",
-            "language": "unknown",
-            "original_text": "",
-            "segments": [],
-            "duration": 0.0,
-            "intelligence": None,
-            "summary": None,
-            "diarization_supported": engine in ("deepgram", "assemblyai"),
-            "engine": engine,
-            "status": "error",
-            "error_message": str(e)
-        }
+
+
+def process_audio_with_progress(file_name: str, file_content: bytes) -> Dict:
+
+"""
+
+   Process audio with Streamlit progress indicators.
+
+   Note: Progress with caching is approximate since cache hits return fast.
+
+   """
+
+progress_bar = st.progress(0)
+
+status_text = st.empty()
+
+file_hash = _calculate_file_hash(file_content)
+
+
+
+try:
+
+status_text.text("Checking cache...")
+
+progress_bar.progress(10)
+
+
+
+result = _process_audio_cached(file_hash, file_name, file_content)
+
+
+
+if result.get("status") == "success":
+
+status_text.text("Processing audio...")
+
+progress_bar.progress(50)
+
+time.sleep(0.4)
+
+status_text.text("Finalizing results...")
+
+progress_bar.progress(90)
+
+time.sleep(0.3)
+
+status_text.text("Complete!")
+
+progress_bar.progress(100)
+
+time.sleep(0.3)
+
+else:
+
+status_text.text("Processing failed")
+
+progress_bar.progress(100)
+
+
+
+return result
+
+finally:
+
+progress_bar.empty()
+
+status_text.empty()
+
+
+
+def validate_file_before_upload(file_name: str, file_content: bytes) -> Dict:
+
+"""Validate file without processing - useful for upload validation."""
+
+return _validate_audio_file(file_name, file_content)
+
+
+
+def get_processing_capabilities() -> Dict:
+
+"""Return current processing capabilities based on available API keys."""
+
+return {
+
+"transcription_available": _get_openai_client() is not None,
+
+"speaker_labeling_available": _get_gemini_model() is not None,
+
+"supported_formats": SUPPORTED_FORMATS,
+
+"max_file_size_mb": MAX_FILE_SIZE // (1024 * 1024),
+
+"features": {
+
+"original_language_transcription": _get_openai_client() is not None,
+
+"english_translation": _get_openai_client() is not None,
+
+"speaker_identification": _get_gemini_model() is not None,
+
+"batched_speaker_labeling": _get_gemini_model() is not None,
+
+"pii_scrubbing": True,
+
+"caching": True,
+
+"progress_tracking": True,
+
+"retry_logic": True,
+
+"timeout_handling": True
+
+}
+
+}
+
+
+
+def clear_audio_cache():
+
+"""Clear the audio processing cache - useful for testing."""
+
+_process_audio_cached.clear()
+
+st.success("Audio processing cache cleared")
