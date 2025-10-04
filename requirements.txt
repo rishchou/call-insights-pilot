@@ -7,3 +7,4 @@ google-generativeai
 plotly
 deepgram-sdk>=3.11,<4.0
 assemblyai>=0.30,<0.40
+anthropic
