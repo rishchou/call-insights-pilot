@@ -4,6 +4,7 @@ numpy
 pandas
 tqdm
 google-generativeai
+google-cloud-speech
 plotly
 deepgram-sdk>=3.11,<4.0
 assemblyai>=0.30,<0.40
