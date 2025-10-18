@@ -91,7 +91,7 @@ def page_call_analysis(selected_engines: List[str]):
 
     with upload_tab:
         st.subheader("1) Upload Audio")
-        files = st.file_uploader("Drag & drop audio files here", type=audio_processing.SUPPORTED_FORMATS, accept_multiple_files=True)
+        files = st.file_uploader("Drag & drop audio files here", type=audio_whisper_gemini.SUPPORTED_FORMATS, accept_multiple_files=True)
 
         if files:
             if not selected_engines:
@@ -101,7 +101,7 @@ def page_call_analysis(selected_engines: List[str]):
                     if file.name in st.session_state.files_metadata:
                         continue
                     content = file.getvalue()
-                    validation = audio_processing._validate_audio_file(file.name, content)
+                    validation = audio_whisper_gemini._validate_audio_file(file.name, content)
                     if not validation["valid"]:
                         st.error(f"{file.name}: {', '.join(validation['errors'])}")
                         continue
@@ -115,7 +115,7 @@ def page_call_analysis(selected_engines: List[str]):
                             st.info(f"Skipping {engine} for {file.name} (already processed).")
                             continue
                         with st.spinner(f"Running engine: {engine}..."):
-                            res = audio_processing.process_audio(file.name, content, engine=engine)
+                            res = audio_whisper_gemini.process_audio(file.name, content)
                             st.session_state.transcription_results[unique_key] = res
                         if res.get("status") == "success":
                             st.success(f"✅ **{engine}:** Processed successfully.")
