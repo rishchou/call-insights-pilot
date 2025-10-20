@@ -184,9 +184,267 @@ def page_call_analysis(selected_engines: List[str]):
 
     with analyze_tab:
         st.subheader("2) Configure & Run Analysis")
-        # Your existing analysis logic can go here. It will use the `get_analysis_ready_files()`
-        # function to find files that have at least one successful transcription.
-        st.info("Analysis section placeholder. Your original logic can be placed here.")
+        
+        ready_files = get_analysis_ready_files()
+        
+        if not ready_files:
+            st.warning("No files are ready for analysis. Please upload and process audio files first.")
+            return
+        
+        # File selection
+        selected_files = st.multiselect(
+            "Select files to analyze",
+            options=ready_files,
+            default=ready_files,
+            help="Choose which processed files to include in the analysis"
+        )
+        
+        if not selected_files:
+            st.info("Please select at least one file to analyze.")
+            return
+        
+        st.markdown("---")
+        
+        # Analysis options
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Analysis Options**")
+            include_sentiment = st.checkbox("Sentiment Analysis", value=True)
+            include_summary = st.checkbox("Call Summary", value=True)
+            include_key_points = st.checkbox("Key Points Extraction", value=True)
+        
+        with col2:
+            st.markdown("**Call Center Metrics**")
+            analyze_compliance = st.checkbox("Compliance Check", value=True)
+            analyze_customer_satisfaction = st.checkbox("Customer Satisfaction", value=True)
+            detect_issues = st.checkbox("Issue Detection", value=True)
+        
+        st.markdown("---")
+        
+        # Run Analysis button
+        if st.button("🚀 Run AI Analysis", type="primary"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            total_files = len(selected_files)
+            
+            for idx, filename in enumerate(selected_files):
+                status_text.text(f"Analyzing {filename}...")
+                progress_bar.progress((idx) / total_files)
+                
+                # Get the transcription result for this file
+                file_results = {k: v for k, v in st.session_state.transcription_results.items() 
+                               if k.startswith(filename) and v.get("status") == "success"}
+                
+                if not file_results:
+                    continue
+                
+                # Use the first successful result (or combine if multiple engines)
+                result = list(file_results.values())[0]
+                
+                # Prepare transcript for analysis
+                transcript = result.get("english_transcript") or result.get("original_transcript", "")
+                
+                # Add speaker labels to transcript if available
+                segments = result.get("segments", [])
+                if segments:
+                    formatted_transcript = "\n".join([
+                        f"[{seg.get('speaker', 'UNKNOWN')}]: {seg.get('text', '')}"
+                        for seg in segments
+                    ])
+                else:
+                    formatted_transcript = transcript
+                
+                try:
+                    # Run comprehensive AI analysis
+                    analysis_result = ai_engine.run_comprehensive_analysis(
+                        transcript=formatted_transcript,
+                        depth="Standard Analysis",
+                        custom_rubric=None,
+                        max_retries=2,
+                        admin_view=False
+                    )
+                    
+                    # Enrich with additional data
+                    analysis_result["file_name"] = filename
+                    analysis_result["detected_language"] = result.get("detected_language", "unknown")
+                    analysis_result["duration"] = result.get("duration", 0)
+                    
+                    st.session_state.analysis_results[filename] = analysis_result
+                except Exception as e:
+                    st.error(f"Analysis failed for {filename}: {str(e)}")
+                    st.session_state.analysis_results[filename] = {
+                        "status": "error",
+                        "error": str(e)
+                    }
+            
+            progress_bar.progress(1.0)
+            status_text.text("Analysis complete!")
+            st.success(f"✅ Successfully analyzed {len(selected_files)} file(s)")
+            st.balloons()
+        
+        # Display existing analysis results
+        if st.session_state.analysis_results:
+            st.markdown("---")
+            st.subheader("📊 Analysis Results")
+            
+            for filename, analysis in st.session_state.analysis_results.items():
+                if filename not in selected_files:
+                    continue
+                
+                with st.expander(f"📋 {filename}", expanded=True):
+                    if analysis.get("error"):
+                        st.error(f"Analysis error: {analysis['error']}")
+                        continue
+                    
+                    # Display metadata
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Language", analysis.get("detected_language", "N/A"))
+                    with col2:
+                        st.metric("Duration", f"{analysis.get('duration', 0):.1f}s")
+                    with col3:
+                        st.metric("Run ID", analysis.get("run_id", "N/A"))
+                    
+                    st.markdown("---")
+                    
+                    # Display A/B comparison results
+                    stages = analysis.get("stages", [])
+                    overall = analysis.get("overall", {})
+                    
+                    # Show overall scores
+                    if overall:
+                        st.markdown("**📊 Overall Quality Scores (A/B Comparison)**")
+                        col_a, col_b = st.columns(2)
+                        
+                        with col_a:
+                            st.markdown("**Model A**")
+                            if "A" in overall:
+                                metrics_a = overall["A"]
+                                st.metric("Overall Score", f"{metrics_a.get('overall_score', 0):.1f}/10")
+                                st.metric("Risk Level", metrics_a.get("risk_category", "N/A"))
+                                st.metric("High Performers", metrics_a.get("count_high_performers", 0))
+                                st.metric("Critical Concerns", metrics_a.get("count_critical_concerns", 0))
+                        
+                        with col_b:
+                            st.markdown("**Model B**")
+                            if "B" in overall:
+                                metrics_b = overall["B"]
+                                st.metric("Overall Score", f"{metrics_b.get('overall_score', 0):.1f}/10")
+                                st.metric("Risk Level", metrics_b.get("risk_category", "N/A"))
+                                st.metric("High Performers", metrics_b.get('count_high_performers', 0))
+                                st.metric("Critical Concerns", metrics_b.get("count_critical_concerns", 0))
+                    
+                    # Display stage results
+                    for stage in stages:
+                        stage_name = stage.get("name", "Unknown")
+                        
+                        if stage_name == "triage":
+                            st.markdown("**� Call Triage**")
+                            results = stage.get("results", {})
+                            col_a, col_b = st.columns(2)
+                            
+                            with col_a:
+                                st.markdown("**Model A**")
+                                if "A" in results:
+                                    triage_a = results["A"]
+                                    st.write(f"**Category:** {triage_a.get('category', 'N/A')}")
+                                    st.write(f"**Purpose:** {triage_a.get('call_purpose', 'N/A')}")
+                                    st.write(f"**Sentiment:** {triage_a.get('sentiment', 'N/A')}")
+                            
+                            with col_b:
+                                st.markdown("**Model B**")
+                                if "B" in results:
+                                    triage_b = results["B"]
+                                    st.write(f"**Category:** {triage_b.get('category', 'N/A')}")
+                                    st.write(f"**Purpose:** {triage_b.get('call_purpose', 'N/A')}")
+                                    st.write(f"**Sentiment:** {triage_b.get('sentiment', 'N/A')}")
+                        
+                        elif stage_name == "business_outcome":
+                            st.markdown("**💼 Business Outcome**")
+                            results = stage.get("results", {})
+                            col_a, col_b = st.columns(2)
+                            
+                            with col_a:
+                                st.markdown("**Model A**")
+                                if "A" in results:
+                                    outcome_a = results["A"]
+                                    st.write(f"**Outcome:** {outcome_a.get('outcome', 'N/A')}")
+                                    st.write(f"**Reason:** {outcome_a.get('reason', 'N/A')}")
+                            
+                            with col_b:
+                                st.markdown("**Model B**")
+                                if "B" in results:
+                                    outcome_b = results["B"]
+                                    st.write(f"**Outcome:** {outcome_b.get('outcome', 'N/A')}")
+                                    st.write(f"**Reason:** {outcome_b.get('reason', 'N/A')}")
+                        
+                        elif stage_name == "parameter_scores":
+                            st.markdown("**� Parameter Scores**")
+                            
+                            # Create comparison table
+                            param_a = stage.get("A", {})
+                            param_b = stage.get("B", {})
+                            
+                            if param_a or param_b:
+                                # Get all parameter names
+                                all_params = set(param_a.keys()) | set(param_b.keys())
+                                
+                                comparison_data = []
+                                for param in sorted(all_params):
+                                    score_a = param_a.get(param, {}).get("score", "N/A")
+                                    score_b = param_b.get(param, {}).get("score", "N/A")
+                                    comparison_data.append({
+                                        "Parameter": param,
+                                        "Model A Score": score_a,
+                                        "Model B Score": score_b,
+                                        "Difference": abs(float(score_a) - float(score_b)) if isinstance(score_a, (int, float)) and isinstance(score_b, (int, float)) else "N/A"
+                                    })
+                                
+                                st.dataframe(pd.DataFrame(comparison_data), use_container_width=True, hide_index=True)
+            
+            # Export options
+            st.markdown("---")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("📥 Export to Excel"):
+                    try:
+                        excel_data = exports.export_to_excel(st.session_state.analysis_results)
+                        st.download_button(
+                            label="Download Excel",
+                            data=excel_data,
+                            file_name="call_analysis_results.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    except Exception as e:
+                        st.error(f"Export failed: {str(e)}")
+            
+            with col2:
+                if st.button("📄 Export to CSV"):
+                    try:
+                        csv_data = exports.export_to_csv(st.session_state.analysis_results)
+                        st.download_button(
+                            label="Download CSV",
+                            data=csv_data,
+                            file_name="call_analysis_results.csv",
+                            mime="text/csv"
+                        )
+                    except Exception as e:
+                        st.error(f"Export failed: {str(e)}")
+            
+            with col3:
+                if st.button("📊 Export to JSON"):
+                    try:
+                        json_data = exports.export_to_json(st.session_state.analysis_results)
+                        st.download_button(
+                            label="Download JSON",
+                            data=json_data,
+                            file_name="call_analysis_results.json",
+                            mime="application/json"
+                        )
+                    except Exception as e:
+                        st.error(f"Export failed: {str(e)}")
         
 def page_dashboard():
     st.title("📊 Dashboard & Results")
