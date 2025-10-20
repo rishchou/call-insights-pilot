@@ -448,9 +448,259 @@ def page_call_analysis(selected_engines: List[str]):
         
 def page_dashboard():
     st.title("📊 Dashboard & Results")
-    st.info("Dashboard will show results after an analysis is run.")
-    if st.session_state.analysis_results:
-        st.dataframe(_create_summary_df(st.session_state.analysis_results))
+    
+    if not st.session_state.analysis_results:
+        st.info("No analysis results yet. Go to 'Call Analysis' to process and analyze audio files.")
+        return
+    
+    # Summary metrics at the top
+    st.subheader("📈 Summary Metrics")
+    
+    total_calls = len(st.session_state.analysis_results)
+    avg_scores_a = []
+    avg_scores_b = []
+    languages = {}
+    total_duration = 0
+    risk_distribution = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
+    
+    for filename, analysis in st.session_state.analysis_results.items():
+        if analysis.get("error"):
+            continue
+        
+        # Collect scores
+        overall = analysis.get("overall", {})
+        if "A" in overall:
+            avg_scores_a.append(overall["A"].get("overall_score", 0))
+            risk = overall["A"].get("risk_category", "Medium")
+            risk_distribution[risk] = risk_distribution.get(risk, 0) + 1
+        if "B" in overall:
+            avg_scores_b.append(overall["B"].get("overall_score", 0))
+        
+        # Collect metadata
+        lang = analysis.get("detected_language", "unknown")
+        languages[lang] = languages.get(lang, 0) + 1
+        total_duration += analysis.get("duration", 0)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Calls Analyzed", total_calls)
+    
+    with col2:
+        avg_score_a = sum(avg_scores_a) / len(avg_scores_a) if avg_scores_a else 0
+        st.metric("Avg Score (Model A)", f"{avg_score_a:.2f}/10")
+    
+    with col3:
+        avg_score_b = sum(avg_scores_b) / len(avg_scores_b) if avg_scores_b else 0
+        st.metric("Avg Score (Model B)", f"{avg_score_b:.2f}/10")
+    
+    with col4:
+        st.metric("Total Duration", f"{total_duration/60:.1f} min")
+    
+    st.markdown("---")
+    
+    # Visualizations
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("🎯 Risk Distribution")
+        if any(risk_distribution.values()):
+            risk_df = pd.DataFrame({
+                "Risk Level": list(risk_distribution.keys()),
+                "Count": list(risk_distribution.values())
+            })
+            st.bar_chart(risk_df.set_index("Risk Level"))
+        else:
+            st.info("No risk data available")
+    
+    with col2:
+        st.subheader("🌍 Language Distribution")
+        if languages:
+            lang_df = pd.DataFrame({
+                "Language": list(languages.keys()),
+                "Count": list(languages.values())
+            })
+            st.bar_chart(lang_df.set_index("Language"))
+        else:
+            st.info("No language data available")
+    
+    st.markdown("---")
+    
+    # Detailed results table
+    st.subheader("📋 Detailed Analysis Results")
+    
+    detailed_data = []
+    for filename, analysis in st.session_state.analysis_results.items():
+        if analysis.get("error"):
+            detailed_data.append({
+                "File Name": filename,
+                "Status": "❌ Error",
+                "Model A Score": "N/A",
+                "Model B Score": "N/A",
+                "Risk Level": "N/A",
+                "Category": "N/A",
+                "Sentiment": "N/A",
+                "Duration": "N/A"
+            })
+            continue
+        
+        overall = analysis.get("overall", {})
+        stages = analysis.get("stages", [])
+        
+        # Extract triage info
+        triage_results = {}
+        for stage in stages:
+            if stage.get("name") == "triage":
+                triage_results = stage.get("results", {})
+                break
+        
+        model_a_score = overall.get("A", {}).get("overall_score", 0)
+        model_b_score = overall.get("B", {}).get("overall_score", 0)
+        risk_level = overall.get("A", {}).get("risk_category", "N/A")
+        category = triage_results.get("A", {}).get("category", "N/A")
+        sentiment = triage_results.get("A", {}).get("sentiment", "N/A")
+        
+        detailed_data.append({
+            "File Name": filename,
+            "Status": "✅ Success",
+            "Model A Score": f"{model_a_score:.2f}",
+            "Model B Score": f"{model_b_score:.2f}",
+            "Score Diff": f"{abs(model_a_score - model_b_score):.2f}",
+            "Risk Level": risk_level,
+            "Category": category,
+            "Sentiment": sentiment,
+            "Duration": f"{analysis.get('duration', 0):.1f}s",
+            "Language": analysis.get("detected_language", "N/A")
+        })
+    
+    if detailed_data:
+        df = pd.DataFrame(detailed_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    st.markdown("---")
+    
+    # Model comparison analysis
+    st.subheader("🔬 Model A vs Model B Comparison")
+    
+    if avg_scores_a and avg_scores_b:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric(
+                "Average Score Difference",
+                f"{abs(avg_score_a - avg_score_b):.2f}",
+                delta=f"{avg_score_a - avg_score_b:.2f}" if avg_score_a > avg_score_b else f"{avg_score_b - avg_score_a:.2f}"
+            )
+        
+        with col2:
+            agreement_count = sum(1 for a, b in zip(avg_scores_a, avg_scores_b) if abs(a - b) < 1.0)
+            agreement_rate = (agreement_count / len(avg_scores_a)) * 100 if avg_scores_a else 0
+            st.metric("Agreement Rate", f"{agreement_rate:.1f}%", help="Calls where models differ by less than 1 point")
+        
+        with col3:
+            model_a_wins = sum(1 for a, b in zip(avg_scores_a, avg_scores_b) if a > b)
+            st.metric("Model A Higher Scores", f"{model_a_wins}/{len(avg_scores_a)}")
+        
+        # Score distribution comparison
+        st.markdown("**Score Distribution**")
+        comparison_df = pd.DataFrame({
+            "Model A": avg_scores_a,
+            "Model B": avg_scores_b
+        })
+        st.line_chart(comparison_df)
+    
+    st.markdown("---")
+    
+    # Parameter performance analysis
+    st.subheader("📊 Parameter Performance Analysis")
+    
+    # Aggregate parameter scores across all calls
+    param_scores_a = {}
+    param_scores_b = {}
+    param_counts = {}
+    
+    for filename, analysis in st.session_state.analysis_results.items():
+        if analysis.get("error"):
+            continue
+        
+        stages = analysis.get("stages", [])
+        for stage in stages:
+            if stage.get("name") == "parameter_scores":
+                params_a = stage.get("A", {})
+                params_b = stage.get("B", {})
+                
+                for param_name, param_data in params_a.items():
+                    score = param_data.get("score", 0)
+                    if isinstance(score, (int, float)):
+                        param_scores_a[param_name] = param_scores_a.get(param_name, 0) + score
+                        param_counts[param_name] = param_counts.get(param_name, 0) + 1
+                
+                for param_name, param_data in params_b.items():
+                    score = param_data.get("score", 0)
+                    if isinstance(score, (int, float)):
+                        param_scores_b[param_name] = param_scores_b.get(param_name, 0) + score
+    
+    if param_scores_a and param_counts:
+        # Calculate averages
+        avg_param_data = []
+        for param in param_scores_a.keys():
+            avg_a = param_scores_a[param] / param_counts.get(param, 1)
+            avg_b = param_scores_b.get(param, 0) / param_counts.get(param, 1)
+            avg_param_data.append({
+                "Parameter": param,
+                "Model A Avg": round(avg_a, 2),
+                "Model B Avg": round(avg_b, 2),
+                "Difference": round(abs(avg_a - avg_b), 2),
+                "Sample Size": param_counts[param]
+            })
+        
+        param_df = pd.DataFrame(avg_param_data).sort_values("Difference", ascending=False)
+        st.dataframe(param_df, use_container_width=True, hide_index=True)
+        
+        # Highlight parameters with largest differences
+        st.info(f"💡 **Insight:** Parameters with largest model disagreement suggest areas where model choice matters most.")
+    
+    st.markdown("---")
+    
+    # Call category breakdown
+    st.subheader("📞 Call Category Breakdown")
+    
+    category_data = {}
+    sentiment_data = {}
+    
+    for filename, analysis in st.session_state.analysis_results.items():
+        if analysis.get("error"):
+            continue
+        
+        stages = analysis.get("stages", [])
+        for stage in stages:
+            if stage.get("name") == "triage":
+                results = stage.get("results", {})
+                if "A" in results:
+                    category = results["A"].get("category", "Unknown")
+                    sentiment = results["A"].get("sentiment", "Unknown")
+                    category_data[category] = category_data.get(category, 0) + 1
+                    sentiment_data[sentiment] = sentiment_data.get(sentiment, 0) + 1
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if category_data:
+            st.markdown("**Categories**")
+            cat_df = pd.DataFrame({
+                "Category": list(category_data.keys()),
+                "Count": list(category_data.values())
+            })
+            st.dataframe(cat_df, use_container_width=True, hide_index=True)
+    
+    with col2:
+        if sentiment_data:
+            st.markdown("**Sentiments**")
+            sent_df = pd.DataFrame({
+                "Sentiment": list(sentiment_data.keys()),
+                "Count": list(sentiment_data.values())
+            })
+            st.dataframe(sent_df, use_container_width=True, hide_index=True)
 
 def page_rubric_editor():
     st.title("📝 Rubric Editor")
