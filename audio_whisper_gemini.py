@@ -66,7 +66,7 @@ def _get_openai_client() -> Optional[OpenAI]:
 
     """Lazy initialization of OpenAI client."""
 
-    api_key = st.secrets.get("OPENAI_API_KEY")
+    api_key = st.secrets["OPENAI_API_KEY"]
 
     if not api_key:
 

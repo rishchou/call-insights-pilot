@@ -22,15 +22,15 @@ import google.generativeai as genai
 
 def validate_api_keys() -> Tuple[bool, bool]:
     """Validate API keys are available from st.secrets."""
-    openai_key = st.secrets.get("OPENAI_API_KEY")
-    gemini_key = st.secrets.get("GEMINI_API_KEY")
+    openai_key = st.secrets["OPENAI_API_KEY"]
+    gemini_key = st.secrets["GEMINI_API_KEY"]
     return bool(openai_key), bool(gemini_key)
 
 
 @lru_cache(maxsize=1)
 def get_openai_client() -> OpenAI:
     """Cached OpenAI client."""
-    api_key = st.secrets.get("OPENAI_API_KEY")
+    api_key = st.secrets["OPENAI_API_KEY"]
     if not api_key:
         raise ValueError("OpenAI API key not configured")
     return OpenAI(api_key=api_key)
