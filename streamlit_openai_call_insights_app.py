@@ -155,7 +155,7 @@ def page_call_analysis(selected_engines: List[str]):
                                             "Speaker": s.get("speaker", ""),
                                             "Text": (s.get("text", "")[:160] + ("…" if len(s.get("text", "")) > 160 else ""))
                                         } for s in segs]
-                                        st.dataframe(pd.DataFrame(df_rows), use_container_width=True, hide_index=True)
+                                        st.dataframe(pd.DataFrame(df_rows), width='stretch', hide_index=True)
 
                                         # quick metrics (if available)
                                         m = result.get("diarization_metrics") or {}
@@ -401,7 +401,7 @@ def page_call_analysis(selected_engines: List[str]):
                                         "Difference": abs(float(score_a) - float(score_b)) if isinstance(score_a, (int, float)) and isinstance(score_b, (int, float)) else "N/A"
                                     })
                                 
-                                st.dataframe(pd.DataFrame(comparison_data), use_container_width=True, hide_index=True)
+                                st.dataframe(pd.DataFrame(comparison_data), width='stretch', hide_index=True)
             
             # Export options
             st.markdown("---")
@@ -557,8 +557,8 @@ def page_dashboard():
         model_a_score = overall.get("A", {}).get("overall_score", 0)
         model_b_score = overall.get("B", {}).get("overall_score", 0)
         risk_level = overall.get("A", {}).get("risk_category", "N/A")
-        category = triage_results.get("A", {}).get("category", "N/A")
-        sentiment = triage_results.get("A", {}).get("sentiment", "N/A")
+        category = triage_results.get("A", {}).get("category", "N/A") if isinstance(triage_results, dict) else "N/A"
+        sentiment = triage_results.get("A", {}).get("sentiment", "N/A") if isinstance(triage_results, dict) else "N/A"
         
         detailed_data.append({
             "File Name": filename,
@@ -575,7 +575,7 @@ def page_dashboard():
     
     if detailed_data:
         df = pd.DataFrame(detailed_data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width='stretch', hide_index=True)
     
     st.markdown("---")
     
@@ -655,7 +655,7 @@ def page_dashboard():
             })
         
         param_df = pd.DataFrame(avg_param_data).sort_values("Difference", ascending=False)
-        st.dataframe(param_df, use_container_width=True, hide_index=True)
+        st.dataframe(param_df, width='stretch', hide_index=True)
         
         # Highlight parameters with largest differences
         st.info(f"💡 **Insight:** Parameters with largest model disagreement suggest areas where model choice matters most.")
@@ -691,7 +691,7 @@ def page_dashboard():
                 "Category": list(category_data.keys()),
                 "Count": list(category_data.values())
             })
-            st.dataframe(cat_df, use_container_width=True, hide_index=True)
+            st.dataframe(cat_df, width='stretch', hide_index=True)
     
     with col2:
         if sentiment_data:
@@ -700,7 +700,7 @@ def page_dashboard():
                 "Sentiment": list(sentiment_data.keys()),
                 "Count": list(sentiment_data.values())
             })
-            st.dataframe(sent_df, use_container_width=True, hide_index=True)
+            st.dataframe(sent_df, width='stretch', hide_index=True)
 
 def page_rubric_editor():
     st.title("📝 Rubric Editor")
