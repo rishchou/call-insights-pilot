@@ -3,11 +3,12 @@ import pandas as pd
 import streamlit as st
 from typing import Dict, List
 import html
+import io
 
 # Your modules
-import audio_whisper_gemini
+import stt_engines
 import ai_engine
-import exports
+import csv_export
 
 # =============================================================================
 # PAGE CONFIG & STYLING
@@ -39,6 +40,8 @@ def initialize_session_state():
         st.session_state.analysis_results = {}
     if "run_history" not in st.session_state:
         st.session_state.run_history = []
+    if "selected_engine" not in st.session_state:
+        st.session_state.selected_engine = "Whisper"
 
 initialize_session_state()
 
@@ -74,9 +77,9 @@ def _create_summary_df(analysis_results: dict) -> pd.DataFrame:
 # UI PAGES
 # =============================================================================
 
-def page_call_analysis(selected_engines: List[str]):
-    st.title("🔍 Call Analysis & Benchmarking")
-    st.caption("Upload calls, process them with one or more engines, and analyze the results.")
+def page_call_analysis():
+    st.title("🔍 Call Analysis & QA with Multiple Transcription Engines")
+    st.caption("Upload calls, process with your chosen transcription engine, and analyze with Gemini.")
 
     total_files = len(st.session_state.files_metadata)
     ready_files = len(get_analysis_ready_files())
@@ -87,40 +90,78 @@ def page_call_analysis(selected_engines: List[str]):
     with c3: metric_card("Files Analyzed", str(analyzed_files))
     st.markdown("---")
 
-    upload_tab, analyze_tab = st.tabs(["Upload & Process", "Analyze Results"])
+    upload_tab, analyze_tab, export_tab = st.tabs(["Upload & Process", "Analyze Results", "Export CSV"])
 
     with upload_tab:
-        st.subheader("1) Upload Audio")
-        files = st.file_uploader("Drag & drop audio files here", type=audio_whisper_gemini.SUPPORTED_FORMATS, accept_multiple_files=True)
+        st.subheader("1) Select Transcription Engine")
+        
+        # Get available engines
+        available_engines = stt_engines.get_available_engines()
+        
+        if not available_engines:
+            st.error("No transcription engines available. Please configure API keys in secrets.")
+            return
+        
+        selected_engine = st.selectbox(
+            "Choose transcription engine:",
+            options=available_engines,
+            index=0,
+            help="Select the speech-to-text engine to use for transcription"
+        )
+        st.session_state.selected_engine = selected_engine
+        
+        st.info(f"**Selected Engine:** {selected_engine}")
+        
+        # Show engine info
+        engine_info = {
+            "Whisper": "OpenAI Whisper - Supports translation and multiple languages",
+            "Gladia": "Gladia API - Fast async processing with translation",
+            "Deepgram": "Deepgram Nova-2 Phonecall - Optimized for phone calls",
+            "AssemblyAI": "AssemblyAI - Auto language detection with diarization"
+        }
+        st.caption(engine_info.get(selected_engine, ""))
+        
+        st.markdown("---")
+        st.subheader("2) Upload Audio Files")
+        files = st.file_uploader(
+            "Drag & drop audio files here", 
+            type=stt_engines.SUPPORTED_FORMATS, 
+            accept_multiple_files=True
+        )
 
         if files:
-            if not selected_engines:
-                st.error("Please select at least one engine from the sidebar to process files.")
-            else:
-                for file in files:
-                    if file.name in st.session_state.files_metadata:
-                        continue
-                    content = file.getvalue()
-                    validation = audio_whisper_gemini._validate_audio_file(file.name, content)
-                    if not validation["valid"]:
-                        st.error(f"{file.name}: {', '.join(validation['errors'])}")
-                        continue
-                    st.session_state.files_metadata[file.name] = {**validation["file_info"]}
-                    st.write(f"---")
-                    st.write(f"Processing **{file.name}** with {len(selected_engines)} engine(s)...")
-                    
-                    for engine in selected_engines:
-                        unique_key = f"{file.name}::{engine}"
-                        if unique_key in st.session_state.transcription_results:
-                            st.info(f"Skipping {engine} for {file.name} (already processed).")
-                            continue
-                        with st.spinner(f"Running engine: {engine}..."):
-                            res = audio_whisper_gemini.process_audio(file.name, content)
-                            st.session_state.transcription_results[unique_key] = res
-                        if res.get("status") == "success":
-                            st.success(f"✅ **{engine}:** Processed successfully.")
-                        else:
-                            st.error(f"❌ **{engine}:** Failed. {res.get('error_message', 'Unknown error')}")
+            for file in files:
+                if file.name in st.session_state.files_metadata:
+                    st.info(f"⏭️ Skipping {file.name} (already uploaded)")
+                    continue
+                
+                content = file.getvalue()
+                validation = stt_engines._validate_audio_file(file.name, content)
+                
+                if not validation["valid"]:
+                    st.error(f"{file.name}: {', '.join(validation['errors'])}")
+                    continue
+                
+                st.session_state.files_metadata[file.name] = {**validation["file_info"]}
+                st.write(f"---")
+                st.write(f"Processing **{file.name}** with **{selected_engine}**...")
+                
+                unique_key = f"{file.name}::{selected_engine}"
+                
+                if unique_key in st.session_state.transcription_results:
+                    st.info(f"Already processed with {selected_engine}")
+                    continue
+                
+                with st.spinner(f"Running {selected_engine}..."):
+                    res = stt_engines.process_audio(file.name, content, selected_engine)
+                    st.session_state.transcription_results[unique_key] = res
+                
+                if res.get("status") == "success":
+                    st.success(f"✅ Processed successfully with {selected_engine}")
+                    st.metric("Duration", f"{res.get('duration', 0):.1f}s")
+                    st.metric("Language", res.get('language', 'unknown'))
+                else:
+                    st.error(f"❌ Failed: {res.get('error_message', 'Unknown error')}")
         
         if st.session_state.files_metadata:
             st.markdown("---")
@@ -205,24 +246,29 @@ def page_call_analysis(selected_engines: List[str]):
         
         st.markdown("---")
         
-        # Analysis options
+        # Analysis depth selection
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**Analysis Options**")
-            include_sentiment = st.checkbox("Sentiment Analysis", value=True)
-            include_summary = st.checkbox("Call Summary", value=True)
-            include_key_points = st.checkbox("Key Points Extraction", value=True)
+            analysis_depth = st.selectbox(
+                "Analysis Depth",
+                options=["Quick Scan", "Standard Analysis", "Deep Dive"],
+                index=1,
+                help="Choose the level of detail for parameter scoring"
+            )
         
         with col2:
-            st.markdown("**Call Center Metrics**")
-            analyze_compliance = st.checkbox("Compliance Check", value=True)
-            analyze_customer_satisfaction = st.checkbox("Customer Satisfaction", value=True)
-            detect_issues = st.checkbox("Issue Detection", value=True)
+            custom_rubric = st.selectbox(
+                "Custom Rubric (Optional)",
+                options=["None", "Sales Outbound", "Banking Support", "Technical Support"],
+                index=0,
+                help="Add industry-specific parameters"
+            )
+            custom_rubric = None if custom_rubric == "None" else custom_rubric
         
         st.markdown("---")
         
         # Run Analysis button
-        if st.button("🚀 Run AI Analysis", type="primary"):
+        if st.button("🚀 Run AI Analysis with Gemini", type="primary"):
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -239,13 +285,10 @@ def page_call_analysis(selected_engines: List[str]):
                 if not file_results:
                     continue
                 
-                # Use the first successful result (or combine if multiple engines)
+                # Use the first successful result
                 result = list(file_results.values())[0]
                 
                 # Prepare transcript for analysis
-                transcript = result.get("english_transcript") or result.get("original_transcript", "")
-                
-                # Add speaker labels to transcript if available
                 segments = result.get("segments", [])
                 if segments:
                     formatted_transcript = "\n".join([
@@ -253,24 +296,28 @@ def page_call_analysis(selected_engines: List[str]):
                         for seg in segments
                     ])
                 else:
-                    formatted_transcript = transcript
+                    formatted_transcript = result.get("english_text") or result.get("original_text", "")
                 
                 try:
-                    # Run comprehensive AI analysis
+                    # Run comprehensive AI analysis with Gemini
                     analysis_result = ai_engine.run_comprehensive_analysis(
                         transcript=formatted_transcript,
-                        depth="Standard Analysis",
-                        custom_rubric=None,
-                        max_retries=2,
-                        admin_view=False
+                        depth=analysis_depth,
+                        custom_rubric=custom_rubric,
+                        max_retries=2
                     )
                     
-                    # Enrich with additional data
+                    # Enrich with metadata
                     analysis_result["file_name"] = filename
-                    analysis_result["detected_language"] = result.get("detected_language", "unknown")
+                    analysis_result["detected_language"] = result.get("language", "unknown")
                     analysis_result["duration"] = result.get("duration", 0)
+                    analysis_result["engine"] = result.get("engine", "")
                     
-                    st.session_state.analysis_results[filename] = analysis_result
+                    st.session_state.analysis_results[filename] = {
+                        "stt_result": result,
+                        "analysis": analysis_result,
+                        "rubric": analysis_depth
+                    }
                 except Exception as e:
                     st.error(f"Analysis failed for {filename}: {str(e)}")
                     st.session_state.analysis_results[filename] = {
@@ -288,16 +335,158 @@ def page_call_analysis(selected_engines: List[str]):
             st.markdown("---")
             st.subheader("📊 Analysis Results")
             
-            for filename, analysis in st.session_state.analysis_results.items():
+            for filename, result in st.session_state.analysis_results.items():
                 if filename not in selected_files:
                     continue
                 
-                with st.expander(f"📋 {filename}", expanded=True):
-                    if analysis.get("error"):
-                        st.error(f"Analysis error: {analysis['error']}")
+                with st.expander(f"📋 {filename}", expanded=False):
+                    if result.get("error"):
+                        st.error(f"Analysis error: {result['error']}")
                         continue
                     
-                    # Display metadata
+                    analysis = result.get("analysis", {})
+                    
+                    # Display triage info
+                    triage = analysis.get("triage", {})
+                    if triage:
+                        st.markdown("#### 📞 Call Triage")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Purpose", triage.get("purpose", "N/A"))
+                        with col2:
+                            st.metric("Category", triage.get("category", "N/A"))
+                        with col3:
+                            st.metric("Sentiment", triage.get("customer_sentiment", "N/A"))
+                        st.caption(triage.get("summary", ""))
+                    
+                    # Display business outcome
+                    outcome = analysis.get("business_outcome", {})
+                    if outcome:
+                        st.markdown("#### 💼 Business Outcome")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Outcome", outcome.get("business_outcome", "N/A"))
+                            st.metric("Compliance", outcome.get("compliance_adherence", "N/A"))
+                        with col2:
+                            st.metric("Risk", outcome.get("risk_identified", "N/A"))
+                            st.caption(outcome.get("justification", ""))
+                    
+                    # Display overall score
+                    overall = analysis.get("overall", {})
+                    if overall:
+                        st.markdown("#### 🎯 Overall Quality Score")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            score = overall.get("overall_score", 0)
+                            st.metric("Score", f"{score}/100")
+                        with col2:
+                            st.metric("Quality", overall.get("quality_bucket", "N/A"))
+                        with col3:
+                            st.metric("Parameters Scored", overall.get("total_parameters_scored", 0))
+                        
+                        # Show coaching opportunities
+                        coaching = overall.get("coaching_opportunities", [])
+                        if coaching:
+                            st.markdown("**🎓 Coaching Opportunities:**")
+                            for i, opp in enumerate(coaching[:3], 1):
+                                st.info(f"{i}. **{opp.get('parameter')}**: {opp.get('coaching')}")
+                    
+                    # Show parameter scores
+                    param_scores = analysis.get("parameter_scores", {})
+                    if param_scores:
+                        st.markdown("#### 📊 Parameter Scores")
+                        param_df = pd.DataFrame([
+                            {
+                                "Parameter": name,
+                                "Score": data.get("score", "N/A"),
+                                "Confidence": data.get("confidence", "N/A"),
+                                "Coaching": data.get("coaching_opportunity", "")[:100] + "..."
+                            }
+                            for name, data in param_scores.items()
+                            if isinstance(data, dict) and "error" not in data
+                        ])
+                        st.dataframe(param_df, use_container_width=True)
+    
+    with export_tab:
+        st.subheader("📥 Export Analysis Results to CSV")
+        
+        if not st.session_state.analysis_results:
+            st.warning("No analysis results to export. Please run analysis first.")
+            return
+        
+        st.info(f"**Ready to export:** {len(st.session_state.analysis_results)} analysis result(s)")
+        
+        # Summary export
+        if st.button("📊 Export Summary CSV"):
+            analyses = []
+            for filename, result in st.session_state.analysis_results.items():
+                if result.get("error"):
+                    continue
+                analyses.append({
+                    "file_name": filename,
+                    "stt_result": result.get("stt_result", {}),
+                    "analysis": result.get("analysis", {})
+                })
+            
+            summary_df = csv_export.create_summary_df(analyses)
+            
+            # Convert to CSV for download
+            csv_buffer = io.StringIO()
+            summary_df.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
+            csv_data = csv_buffer.getvalue()
+            
+            st.download_button(
+                label="⬇️ Download Summary CSV",
+                data=csv_data,
+                file_name="qa_summary.csv",
+                mime="text/csv"
+            )
+            
+            st.success("Summary CSV ready for download!")
+            st.dataframe(summary_df, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Detailed export with parameters
+        if st.button("📋 Export Detailed Parameters CSV"):
+            analyses = []
+            for filename, result in st.session_state.analysis_results.items():
+                if result.get("error"):
+                    continue
+                analyses.append({
+                    "file_name": filename,
+                    "stt_result": result.get("stt_result", {}),
+                    "analysis": result.get("analysis", {}),
+                    "rubric": result.get("rubric", "Standard Analysis")
+                })
+            
+            all_rows = []
+            for item in analyses:
+                stt_ctx = csv_export.build_stt_context(
+                    item["stt_result"], 
+                    item["file_name"], 
+                    rubric=item.get("rubric", "Standard Analysis")
+                )
+                rows = csv_export._param_rows_with_context(stt_ctx, item["analysis"], truncate_len=8000)
+                all_rows.extend(rows)
+            
+            detailed_df = pd.DataFrame(all_rows)
+            
+            # Convert to CSV for download
+            csv_buffer = io.StringIO()
+            detailed_df.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
+            csv_data = csv_buffer.getvalue()
+            
+            st.download_button(
+                label="⬇️ Download Detailed Parameters CSV",
+                data=csv_data,
+                file_name="qa_params_detailed.csv",
+                mime="text/csv"
+            )
+            
+            st.success(f"Detailed CSV ready for download! ({len(all_rows)} parameter rows)")
+            st.caption("Preview (first 100 rows):")
+            st.dataframe(detailed_df.head(100), use_container_width=True)
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("Language", analysis.get("detected_language", "N/A"))
@@ -715,28 +904,47 @@ def page_run_history():
 # =============================================================================
 
 def main():
-    st.sidebar.title("Call Insights Desk")
-
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Engine Configuration**")
-    engine_options = ["whisper_gemini", "gladia", "assemblyai", "deepgram"]
-    selected_engines = st.sidebar.multiselect(
-        "Select Engine(s) to Run",
-        options=engine_options,
-        default=["whisper_gemini"],
-        help="Select one for normal use, or multiple to run a benchmark comparison."
-    )
-
-    st.sidebar.markdown("---")
-    pages = {
-        "Call Analysis": lambda: page_call_analysis(selected_engines),
-        "Dashboard": page_dashboard,
-        "Rubric Editor": page_rubric_editor,
-        "Run History": page_run_history,
-    }
-    page_name = st.sidebar.radio("Navigation", list(pages.keys()))
+    # Sidebar
+    with st.sidebar:
+        st.title("⚙️ Settings")
+        
+        # Show available engines
+        available_engines = stt_engines.get_available_engines()
+        st.info(f"**Available Engines:** {', '.join(available_engines) if available_engines else 'None'}")
+        
+        # API key status
+        st.markdown("### 🔑 API Keys Status")
+        if st.secrets.get("OPENAI_API_KEY"):
+            st.success("✅ OpenAI (Whisper)")
+        if st.secrets.get("GEMINI_API_KEY"):
+            st.success("✅ Gemini (Analysis & Diarization)")
+        if st.secrets.get("GLADIA_API_KEY"):
+            st.success("✅ Gladia")
+        if st.secrets.get("DEEPGRAM_API_KEY"):
+            st.success("✅ Deepgram")
+        if st.secrets.get("ASSEMBLYAI_API_KEY"):
+            st.success("✅ AssemblyAI")
+        
+        st.markdown("---")
+        
+        # Stats
+        st.markdown("### 📊 Session Stats")
+        st.metric("Files Uploaded", len(st.session_state.files_metadata))
+        st.metric("Files Processed", len(st.session_state.transcription_results))
+        st.metric("Files Analyzed", len(st.session_state.analysis_results))
+        
+        st.markdown("---")
+        
+        if st.button("🗑️ Clear All Data"):
+            st.session_state.files_metadata.clear()
+            st.session_state.transcription_results.clear()
+            st.session_state.analysis_results.clear()
+            st.rerun()
     
-    pages[page_name]()
+    # Main content
+    page_call_analysis()
+
 
 if __name__ == "__main__":
     main()
+

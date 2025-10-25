@@ -1,18 +1,12 @@
-# ai_engine.py — A/B anonymized dual-model engine for call QA (Streamlit-friendly, UI-agnostic)
+# ai_engine.py — Gemini-2.5-flash analysis engine for call QA
 
 import json
 import time
-import statistics
-import random
-import uuid
 import re
-import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import streamlit as st
-from openai import OpenAI
 import google.generativeai as genai
 
 
@@ -20,20 +14,10 @@ import google.generativeai as genai
 # API CLIENT SETUP & CONFIGURATION
 # ======================================================================================
 
-def validate_api_keys() -> Tuple[bool, bool]:
-    """Validate API keys are available from st.secrets."""
-    openai_key = st.secrets["OPENAI_API_KEY"]
-    gemini_key = st.secrets["GEMINI_API_KEY"]
-    return bool(openai_key), bool(gemini_key)
-
-
-@lru_cache(maxsize=1)
-def get_openai_client() -> OpenAI:
-    """Cached OpenAI client."""
-    api_key = st.secrets["OPENAI_API_KEY"]
-    if not api_key:
-        raise ValueError("OpenAI API key not configured")
-    return OpenAI(api_key=api_key)
+def validate_api_key() -> bool:
+    """Validate Gemini API key is available from st.secrets."""
+    gemini_key = st.secrets.get("GEMINI_API_KEY")
+    return bool(gemini_key)
 
 
 @lru_cache(maxsize=1)
@@ -43,9 +27,9 @@ def get_gemini_client():
     if not api_key:
         raise ValueError("Gemini API key not configured")
     genai.configure(api_key=api_key)
-    # Force JSON MIME type to reduce parsing errors
+    # Use gemini-2.5-flash with JSON response format
     return genai.GenerativeModel(
-        "gemini-1.5-pro",
+        "gemini-2.0-flash-exp",
         generation_config={"temperature": 0.2, "response_mime_type": "application/json"},
     )
 
@@ -141,34 +125,19 @@ def _json_guard(text_response: str) -> dict:
 # MODEL CALLS
 # ======================================================================================
 
-def call_ai_engine_single(prompt: str, model_name: str, max_retries: int = 2) -> dict:
-    """Call a single model ('gpt' or 'gemini') with retries and timing."""
+def call_gemini_single(prompt: str, max_retries: int = 2) -> dict:
+    """Call Gemini with retries and timing."""
     start_time = time.time()
     last_err = None
 
     for attempt in range(1, max_retries + 1):
         try:
-            if model_name == "gpt":
-                client = get_openai_client()
-                resp = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"},
-                    temperature=0.2,
-                    timeout=30,
-                )
-                result = _json_guard(resp.choices[0].message.content)
-
-            elif model_name == "gemini":
-                model = get_gemini_client()
-                resp = model.generate_content(prompt, request_options={"timeout": 30})
-                result = _json_guard(getattr(resp, "text", "") or "")
-
-            else:
-                result = {"error": f"Unknown model '{model_name}'"}
+            model = get_gemini_client()
+            resp = model.generate_content(prompt, request_options={"timeout": 30})
+            result = _json_guard(getattr(resp, "text", "") or "")
 
             result["_performance"] = {
-                "model": model_name,
+                "model": "gemini",
                 "response_time": round(time.time() - start_time, 2),
                 "attempts": attempt,
                 "success": "error" not in result,
@@ -180,95 +149,9 @@ def call_ai_engine_single(prompt: str, model_name: str, max_retries: int = 2) ->
             time.sleep(0.5)  # backoff
 
     return {
-        "error": f"{model_name} failed after {max_retries} attempts: {last_err}",
-        "_performance": {"model": model_name, "failed": True, "attempts": max_retries, "error": last_err},
+        "error": f"Gemini failed after {max_retries} attempts: {last_err}",
+        "_performance": {"model": "gemini", "failed": True, "attempts": max_retries, "error": last_err},
     }
-
-
-def _stash_model_comparison(detailed: dict):
-    """Keep a capped history of model comparisons in session state."""
-    buf = st.session_state.setdefault("_model_comparisons", [])
-    buf.append({"ts": time.time(), "results": detailed})
-    if len(buf) > 50:
-        buf.pop(0)
-
-
-def _create_ab_mapping(openai_ok: bool, gemini_ok: bool) -> Tuple[str, Dict[str, str]]:
-    """
-    Create a randomized A/B mapping for this run.
-    Returns (run_id, {"A": "gpt"/"gemini", "B": "gpt"/"gemini"?}).
-    """
-    run_id = str(uuid.uuid4())[:8]
-    mapping = {}
-    if openai_ok and gemini_ok:
-        pair = ["gpt", "gemini"]
-        random.shuffle(pair)
-        mapping = {"A": pair[0], "B": pair[1]}
-    elif openai_ok:
-        mapping = {"A": "gpt"}
-    elif gemini_ok:
-        mapping = {"A": "gemini"}
-    else:
-        mapping = {}
-    # Persist mapping for admin lookup
-    st.session_state.setdefault("_ab_runs", {})[run_id] = mapping
-    return run_id, mapping
-
-
-def _call_pair_with_mapping(prompt: str, mapping: Dict[str, str], max_retries: int = 2) -> Tuple[Dict[str, dict], dict]:
-    """
-    Call the models specified in mapping in parallel.
-    Returns (results_by_label, perf_summary).
-    """
-    results: Dict[str, dict] = {}
-    perf = {"models_used": [], "total_time": None}
-
-    start = time.time()
-    tasks = {}
-    with ThreadPoolExecutor(max_workers=max(1, len(mapping))) as pool:
-        for label, model_name in mapping.items():
-            tasks[label] = pool.submit(call_ai_engine_single, prompt, model_name, max_retries)
-
-        for label, fut in tasks.items():
-            results[label] = fut.result()
-            model_name = mapping[label]
-            if model_name not in perf["models_used"]:
-                perf["models_used"].append(model_name)
-
-    perf["total_time"] = round(time.time() - start, 2)
-    return results, perf
-
-
-# ======================================================================================
-# PUBLIC API: SINGLE PROMPT (A/B)
-# ======================================================================================
-
-def call_ai_engine(prompt: str, max_retries: int = 2, admin_view: bool = False) -> dict:
-    """
-    Run a single prompt through anonymized A/B:
-      - Users get: {"results": [{"label":"A","result":...}, {"label":"B","result":...}]}
-      - Admin gets (if admin_view=True): + {"admin": {"run_id":..., "mapping": {...}, "performance_summary": {...}}}
-    If only one model is configured, returns just A.
-    """
-    openai_ok, gemini_ok = validate_api_keys()
-    if not (openai_ok or gemini_ok):
-        return {"error": "No API keys configured"}
-
-    clean_prompt = sanitize_transcript(prompt)
-    run_id, mapping = _create_ab_mapping(openai_ok, gemini_ok)
-    results_by_label, perf = _call_pair_with_mapping(clean_prompt, mapping, max_retries)
-
-    # Build user payload
-    items = [{"label": label, "result": results_by_label[label]} for label in ("A", "B") if label in results_by_label]
-    detailed = {m: results_by_label[lbl] for lbl, m in mapping.items()}
-    detailed["performance_summary"] = {"total_time": perf["total_time"], "parallel_execution": True, "models_used": perf["models_used"]}
-
-    _stash_model_comparison(detailed)
-
-    payload = {"results": items}
-    if admin_view:
-        payload["admin"] = {"run_id": run_id, "mapping": mapping, "performance_summary": detailed["performance_summary"]}
-    return payload
 
 
 # ======================================================================================
@@ -479,125 +362,77 @@ def calculate_overall_metrics(parameter_scores: dict) -> dict:
 
 
 # ======================================================================================
-# MULTI-STAGE ANALYSIS (A/B preserved across all stages)
+# MULTI-STAGE ANALYSIS (Gemini only)
 # ======================================================================================
 
-def run_initial_triage_ab(transcript: str, mapping: Dict[str, str], max_retries: int = 2, admin_view: bool = False) -> dict:
+def run_initial_triage(transcript: str, max_retries: int = 2) -> dict:
+    """Run triage analysis with Gemini."""
     prompt = get_triage_prompt(transcript)
-    results_by_label, perf = _call_pair_with_mapping(prompt, mapping, max_retries)
-    payload = {"results": [{"label": lbl, "result": results_by_label[lbl]} for lbl in ("A", "B") if lbl in results_by_label]}
-    if admin_view:
-        payload["admin"] = {"performance_summary": {"total_time": perf["total_time"], "models_used": perf["models_used"]}}
-    return payload
+    return call_gemini_single(prompt, max_retries)
 
 
-def run_business_outcome_ab(transcript: str, mapping: Dict[str, str], max_retries: int = 2, admin_view: bool = False) -> dict:
+def run_business_outcome(transcript: str, max_retries: int = 2) -> dict:
+    """Run business outcome analysis with Gemini."""
     prompt = get_business_outcome_prompt(transcript)
-    results_by_label, perf = _call_pair_with_mapping(prompt, mapping, max_retries)
-    payload = {"results": [{"label": lbl, "result": results_by_label[lbl]} for lbl in ("A", "B") if lbl in results_by_label]}
-    if admin_view:
-        payload["admin"] = {"performance_summary": {"total_time": perf["total_time"], "models_used": perf["models_used"]}}
-    return payload
+    return call_gemini_single(prompt, max_retries)
 
 
-def run_parameter_scoring_ab(transcript: str, parameters: List[dict], mapping: Dict[str, str], max_retries: int = 2, admin_view: bool = False) -> dict:
-    """
-    Score each parameter for A and B with the same mapping.
-    Returns:
-      {
-        "A": {param_name: result_with_weight_custom, ...},
-        "B": {param_name: result_with_weight_custom, ...},
-        "admin": {...?}
-      }
-    """
-    scores = {"A": {}, "B": {}}
-    perf_totals = {"A": 0.0, "B": 0.0, "calls": 0}
-
+def run_parameter_scoring(transcript: str, parameters: List[dict], max_retries: int = 2) -> dict:
+    """Score each parameter with Gemini."""
+    scores = {}
+    
     for p in parameters:
         prompt = get_parameter_scoring_prompt(transcript, p["name"], p["anchors"])
-        results_by_label, perf = _call_pair_with_mapping(prompt, mapping, max_retries)
-        perf_totals["calls"] += 1
-        for lbl in results_by_label:
-            r = results_by_label[lbl]
-            if "error" not in r:
-                r["weight"] = p.get("weight", 10)
-                r["custom"] = p.get("custom", False)
-            scores[lbl][p["name"]] = r
-            if r.get("_performance", {}).get("response_time"):
-                perf_totals[lbl] += r["_performance"]["response_time"]
-
-    payload = {"A": scores.get("A", {}), "B": scores.get("B", {})}
-    if admin_view:
-        payload["admin"] = {
-            "perf_estimates": {
-                "A_total_secs": round(perf_totals["A"], 2),
-                "B_total_secs": round(perf_totals["B"], 2),
-                "param_calls": perf_totals["calls"],
-            }
-        }
-    return payload
+        result = call_gemini_single(prompt, max_retries)
+        
+        if "error" not in result:
+            result["weight"] = p.get("weight", 10)
+            result["custom"] = p.get("custom", False)
+        scores[p["name"]] = result
+    
+    return scores
 
 
-def run_comprehensive_analysis(transcript: str, depth: str = "Standard Analysis", custom_rubric: Optional[str] = None, max_retries: int = 2, admin_view: bool = False) -> dict:
+def run_comprehensive_analysis(
+    transcript: str, 
+    depth: str = "Standard Analysis", 
+    custom_rubric: Optional[str] = None, 
+    max_retries: int = 2
+) -> dict:
     """
-    Orchestrated A/B analysis with a single, consistent A/B mapping:
+    Comprehensive analysis using Gemini:
       - triage
       - business outcome
       - parameter scoring
-      - overall metrics per variant
-    Returns a dict that the UI can render without needing Streamlit calls here.
+      - overall metrics
     """
     if not transcript or not transcript.strip():
         return {"error": "Empty transcript provided"}
 
-    openai_ok, gemini_ok = validate_api_keys()
-    if not (openai_ok or gemini_ok):
-        return {"error": "No API keys configured"}
+    if not validate_api_key():
+        return {"error": "Gemini API key not configured"}
 
     cleaned = sanitize_transcript(transcript)
-    run_id, mapping = _create_ab_mapping(openai_ok, gemini_ok)
 
     # Stage 1: triage
-    triage = run_initial_triage_ab(cleaned, mapping, max_retries, admin_view)
+    triage = run_initial_triage(cleaned, max_retries)
 
     # Stage 2: business outcomes
-    outcome = run_business_outcome_ab(cleaned, mapping, max_retries, admin_view)
+    outcome = run_business_outcome(cleaned, max_retries)
 
-    # Stage 3: parameter scoring + overall
+    # Stage 3: parameter scoring
     params = get_combined_parameters(depth, custom_rubric)
-    param_scores = run_parameter_scoring_ab(cleaned, params, mapping, max_retries, admin_view)
+    param_scores = run_parameter_scoring(cleaned, params, max_retries)
 
-    overall = {}
-    if "A" in param_scores and param_scores["A"]:
-        overall["A"] = calculate_overall_metrics(param_scores["A"])
-    if "B" in param_scores and param_scores["B"]:
-        overall["B"] = calculate_overall_metrics(param_scores["B"])
+    # Stage 4: overall metrics
+    overall = calculate_overall_metrics(param_scores) if param_scores else {}
 
-    payload = {
-        "run_id": run_id,
-        "mapping_present": bool(mapping),  # not the mapping itself (kept admin-only)
-        "stages": [
-            {"name": "triage", "results": triage["results"]},
-            {"name": "business_outcome", "results": outcome["results"]},
-            {"name": "parameter_scores", "A": param_scores.get("A", {}), "B": param_scores.get("B", {})},
-        ],
+    return {
+        "status": "success",
+        "triage": triage,
+        "business_outcome": outcome,
+        "parameter_scores": param_scores,
         "overall": overall,
-    }
-
-    if admin_view:
-        payload["admin"] = {
-            "mapping": mapping,
-            "triage_admin": triage.get("admin"),
-            "outcome_admin": outcome.get("admin"),
-            "params_admin": param_scores.get("admin"),
-        }
-
-    # Optionally stash a compact detailed log:
-    _stash_model_comparison({
-        "run_id": run_id,
-        "mapping": mapping,
         "depth": depth,
-        "custom_rubric": custom_rubric,
-        "notes": "comprehensive_ab",
-    })
-    return payload
+        "custom_rubric": custom_rubric
+    }
