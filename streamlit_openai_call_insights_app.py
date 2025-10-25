@@ -155,6 +155,7 @@ def page_call_analysis():
         }
         
         st.caption(engine_info.get(selected_engine, ""))
+        st.caption("💡 Tip: You can upload the same file multiple times with different engines to compare transcription quality.")
         
         st.markdown("---")
         st.subheader("2) Upload Audio Files")
@@ -166,26 +167,34 @@ def page_call_analysis():
 
         if files:
             for file in files:
-                if file.name in st.session_state.files_metadata:
-                    st.info(f"⏭️ Skipping {file.name} (already uploaded)")
+                content = file.getvalue()
+                unique_key = f"{file.name}::{selected_engine}"
+                
+                # Check if this specific file+engine combination was already processed
+                if unique_key in st.session_state.transcription_results:
+                    st.info(f"✅ {file.name} already processed with {selected_engine}")
+                    result = st.session_state.transcription_results[unique_key]
+                    if result.get("status") == "success":
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Duration", f"{result.get('duration', 0):.1f}s")
+                        with col2:
+                            st.metric("Language", result.get('language', 'unknown'))
                     continue
                 
-                content = file.getvalue()
+                # Validate file
                 validation = stt_engines._validate_audio_file(file.name, content)
                 
                 if not validation["valid"]:
                     st.error(f"{file.name}: {', '.join(validation['errors'])}")
                     continue
                 
-                st.session_state.files_metadata[file.name] = {**validation["file_info"]}
+                # Store file metadata if not already stored
+                if file.name not in st.session_state.files_metadata:
+                    st.session_state.files_metadata[file.name] = {**validation["file_info"]}
+                
                 st.write(f"---")
                 st.write(f"Processing **{file.name}** with **{selected_engine}**...")
-                
-                unique_key = f"{file.name}::{selected_engine}"
-                
-                if unique_key in st.session_state.transcription_results:
-                    st.info(f"Already processed with {selected_engine}")
-                    continue
                 
                 with st.spinner(f"Running {selected_engine}..."):
                     res = stt_engines.process_audio(file.name, content, selected_engine)
@@ -193,8 +202,11 @@ def page_call_analysis():
                 
                 if res.get("status") == "success":
                     st.success(f"✅ Processed successfully with {selected_engine}")
-                    st.metric("Duration", f"{res.get('duration', 0):.1f}s")
-                    st.metric("Language", res.get('language', 'unknown'))
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Duration", f"{res.get('duration', 0):.1f}s")
+                    with col2:
+                        st.metric("Language", res.get('language', 'unknown'))
                 else:
                     st.error(f"❌ Failed: {res.get('error_message', 'Unknown error')}")
         
