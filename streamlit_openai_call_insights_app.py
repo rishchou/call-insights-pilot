@@ -120,7 +120,7 @@ def page_call_analysis():
                 available_models.append("Gemini")
             if st.secrets.get("OPENAI_API_KEY"):
                 available_models.append("GPT-4")
-            if st.secrets.get("ANTHROPIC_API_KEY"):
+            if st.secrets.get("CLAUDE_API_KEY"):
                 available_models.append("Claude")
             
             if not available_models:
@@ -150,7 +150,7 @@ def page_call_analysis():
             "GPT-4": "OpenAI GPT-4o - High accuracy and reasoning",
             "Claude": "Anthropic Claude Sonnet 4 - Excellent comprehension"
         }
-        }
+        
         st.caption(engine_info.get(selected_engine, ""))
         
         st.markdown("---")

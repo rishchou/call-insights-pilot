@@ -21,7 +21,7 @@ def validate_api_key(model: str = "Gemini") -> bool:
     key_mapping = {
         "Gemini": "GEMINI_API_KEY",
         "GPT-4": "OPENAI_API_KEY",
-        "Claude": "ANTHROPIC_API_KEY"
+        "Claude": "CLAUDE_API_KEY"
     }
     key_name = key_mapping.get(model, "GEMINI_API_KEY")
     return bool(st.secrets.get(key_name))
@@ -52,9 +52,9 @@ def get_openai_client():
 @lru_cache(maxsize=1)
 def get_anthropic_client():
     """Cached Anthropic client for Claude."""
-    api_key = st.secrets.get("ANTHROPIC_API_KEY")
+    api_key = st.secrets.get("CLAUDE_API_KEY")
     if not api_key:
-        raise ValueError("Anthropic API key not configured")
+        raise ValueError("Claude API key not configured")
     return Anthropic(api_key=api_key)
 
 
