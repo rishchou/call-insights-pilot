@@ -4,6 +4,7 @@ import streamlit as st
 from typing import Dict, List
 import html
 import io
+import hashlib
 
 # Your modules
 import stt_engines
@@ -42,6 +43,8 @@ def initialize_session_state():
         st.session_state.run_history = []
     if "selected_engine" not in st.session_state:
         st.session_state.selected_engine = "Whisper"
+    if "comparison_cache" not in st.session_state:
+        st.session_state.comparison_cache = {}
 
 initialize_session_state()
 
@@ -582,9 +585,32 @@ def page_call_analysis():
         st.markdown("---")
         
         total_combinations = len(available_stt) * len(available_llm)
-        st.info(f"**{total_combinations} combinations** ({len(available_stt)} STT × {len(available_llm)} Analysis)")
         
-        if st.button("🚀 Run Full Model Comparison", type="primary"):
+        # Generate cache key for this file + configuration
+        file_content = comparison_file.getvalue()
+        file_hash = hashlib.sha256(file_content).hexdigest()
+        cache_key = f"{file_hash}_{analysis_depth}_{custom_rubric or 'None'}"
+        
+        # Check if results are cached
+        cached = cache_key in st.session_state.comparison_cache
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info(f"**{total_combinations} combinations** ({len(available_stt)} STT × {len(available_llm)} Analysis)")
+        with col2:
+            if cached:
+                st.success("✅ Cached")
+            else:
+                st.warning("🔄 Not cached")
+        
+        # Show cached results info
+        if cached:
+            cached_data = st.session_state.comparison_cache[cache_key]
+            st.info(f"💾 Using cached results from previous analysis of this file (saved {len(cached_data.get('data', []))} results)")
+        
+        run_button = st.button("🚀 Run Full Model Comparison", type="primary", disabled=False)
+        
+        if run_button:
             # Initialize results storage
             if "comparison_results" not in st.session_state:
                 st.session_state.comparison_results = {}
@@ -694,13 +720,21 @@ def page_call_analysis():
             progress_bar.progress(1.0)
             status_text.text("✅ Comparison complete!")
             
-            # Store results
-            st.session_state.comparison_results = {
+            # Store results in both session state and cache
+            results_data = {
                 "file": file_name,
                 "depth": analysis_depth,
                 "rubric": custom_rubric,
                 "data": comparison_data
             }
+            st.session_state.comparison_results = results_data
+            st.session_state.comparison_cache[cache_key] = results_data
+            
+            st.success(f"💾 Results cached for future use!")
+        
+        # Load cached results if available and not just run
+        elif cached and not run_button:
+            st.session_state.comparison_results = st.session_state.comparison_cache[cache_key]
         
         # Display comparison results
         if "comparison_results" in st.session_state and st.session_state.comparison_results:
@@ -725,18 +759,15 @@ def page_call_analysis():
                 pivot_scores = success_df.pivot_table(
                     values="Overall Score",
                     index="STT Engine",
-                    columns="Analysis Model",
-                    aggfunc="mean"
-                )
-                
-                # Display as styled dataframe
-                st.dataframe(
-                    pivot_scores.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100)
-                    .format("{:.1f}"),
-                    use_container_width=True
-                )
-                
-                # Quality bucket distribution
+                columns="Analysis Model",
+                aggfunc="mean"
+            )
+            
+            # Display pivot table with color gradient
+            st.dataframe(
+                pivot_scores.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100).format("{:.1f}"),
+                use_container_width=True
+            )                # Quality bucket distribution
                 st.markdown("#### 📈 Quality Distribution")
                 col1, col2 = st.columns(2)
                 
@@ -805,17 +836,39 @@ def page_call_analysis():
             
             # Download comparison results
             st.markdown("---")
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
-            csv_data = csv_buffer.getvalue()
+            col1, col2 = st.columns([4, 1])
             
-            st.download_button(
-                label="📥 Download Comparison Results CSV",
-                data=csv_data,
-                file_name=f"model_comparison_{file_name}.csv",
-                mime="text/csv"
-            )
-
+            with col1:
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
+                csv_data = csv_buffer.getvalue()
+                
+                st.download_button(
+                    label="📥 Download Comparison Results CSV",
+                    data=csv_data,
+                    file_name=f"model_comparison_{file_name}.csv",
+                    mime="text/csv"
+                )
+            
+            with col2:
+                # Clear cache button
+                if st.button("🗑️ Clear Cache", help="Clear all cached comparison results"):
+                    st.session_state.comparison_cache = {}
+                    st.session_state.comparison_results = {}
+                    st.success("Cache cleared!")
+                    st.rerun()
+        
+        # Show cache info in sidebar
+        if st.session_state.comparison_cache:
+            with st.sidebar:
+                st.markdown("---")
+                st.markdown("### 💾 Cache Info")
+                st.info(f"**{len(st.session_state.comparison_cache)}** cached comparison(s)")
+                if st.button("Clear All Cache", key="sidebar_clear_cache"):
+                    st.session_state.comparison_cache = {}
+                    st.session_state.comparison_results = {}
+                    st.success("Cache cleared!")
+                    st.rerun()
 
 def page_rubric_editor():
     st.title("📝 Rubric Editor")

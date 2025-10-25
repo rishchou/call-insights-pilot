@@ -6,6 +6,7 @@ tqdm
 google-generativeai
 anthropic
 plotly
+matplotlib
 requests
 deepgram-sdk>=3.11,<4.0
 assemblyai>=0.30,<0.40
