@@ -535,10 +535,6 @@ def page_call_analysis():
         st.subheader("🔬 Model Comparison Matrix")
         st.caption("Compare all combinations of transcription engines and analysis models")
         
-        if not st.session_state.files_metadata:
-            st.warning("No files uploaded. Please upload audio files first.")
-            return
-        
         # Get available engines and models
         available_stt = stt_engines.get_available_engines()
         available_llm = []
@@ -553,15 +549,18 @@ def page_call_analysis():
             st.error("Need at least one transcription engine and one analysis model configured.")
             return
         
-        # File selection
-        all_files = list(st.session_state.files_metadata.keys())
-        selected_file = st.selectbox(
-            "Select a file to compare:",
-            options=all_files,
-            help="Choose one audio file to run through all model combinations"
+        st.info(f"**Available:** {len(available_stt)} STT engines × {len(available_llm)} analysis models = {len(available_stt) * len(available_llm)} combinations")
+        
+        # Upload file for comparison
+        st.markdown("### 📤 Upload Audio File for Comparison")
+        comparison_file = st.file_uploader(
+            "Upload a single audio file to test all model combinations",
+            type=stt_engines.SUPPORTED_FORMATS,
+            key="comparison_file_uploader"
         )
         
-        if not selected_file:
+        if not comparison_file:
+            st.info("👆 Upload an audio file to start comparison")
             return
         
         col1, col2 = st.columns(2)
@@ -594,8 +593,8 @@ def page_call_analysis():
             status_text = st.empty()
             
             comparison_data = []
-            file_metadata = st.session_state.files_metadata[selected_file]
-            file_content = file_metadata["content"]
+            file_content = comparison_file.getvalue()
+            file_name = comparison_file.name
             
             combo_idx = 0
             for stt_engine in available_stt:
@@ -603,7 +602,7 @@ def page_call_analysis():
                 status_text.text(f"[{combo_idx + 1}/{total_combinations}] Transcribing with {stt_engine}...")
                 
                 try:
-                    stt_result = stt_engines.process_audio(selected_file, file_content, stt_engine)
+                    stt_result = stt_engines.process_audio(file_name, file_content, stt_engine)
                     
                     if stt_result.get("status") != "success":
                         for llm_model in available_llm:
@@ -697,7 +696,7 @@ def page_call_analysis():
             
             # Store results
             st.session_state.comparison_results = {
-                "file": selected_file,
+                "file": file_name,
                 "depth": analysis_depth,
                 "rubric": custom_rubric,
                 "data": comparison_data
@@ -813,7 +812,7 @@ def page_call_analysis():
             st.download_button(
                 label="📥 Download Comparison Results CSV",
                 data=csv_data,
-                file_name=f"model_comparison_{selected_file}.csv",
+                file_name=f"model_comparison_{file_name}.csv",
                 mime="text/csv"
             )
 
