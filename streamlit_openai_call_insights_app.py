@@ -759,15 +759,17 @@ def page_call_analysis():
                 pivot_scores = success_df.pivot_table(
                     values="Overall Score",
                     index="STT Engine",
-                columns="Analysis Model",
-                aggfunc="mean"
-            )
-            
-            # Display pivot table with color gradient
-            st.dataframe(
-                pivot_scores.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100).format("{:.1f}"),
-                use_container_width=True
-            )                # Quality bucket distribution
+                    columns="Analysis Model",
+                    aggfunc="mean"
+                )
+                
+                # Display pivot table with color gradient
+                st.dataframe(
+                    pivot_scores.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100).format("{:.1f}"),
+                    use_container_width=True
+                )
+                
+                # Quality bucket distribution
                 st.markdown("#### 📈 Quality Distribution")
                 col1, col2 = st.columns(2)
                 
