@@ -487,13 +487,18 @@ def page_call_analysis():
             st.success(f"Detailed CSV ready for download! ({len(all_rows)} parameter rows)")
             st.caption("Preview (first 100 rows):")
             st.dataframe(detailed_df.head(100), use_container_width=True)
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Language", analysis.get("detected_language", "N/A"))
-                    with col2:
-                        st.metric("Duration", f"{analysis.get('duration', 0):.1f}s")
-                    with col3:
-                        st.metric("Run ID", analysis.get("run_id", "N/A"))
+        
+        st.markdown("---")
+        st.info("        
+        st.markdown("---")
+        st.info("💡 **Tip**: Use the detailed CSV for in-depth analysis in Excel or other tools.")
+
+
+# =============================================================================
+# ROUTER
+# =============================================================================
+
+def main():")
                     
                     st.markdown("---")
                     
