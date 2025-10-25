@@ -228,8 +228,15 @@ def page_call_analysis():
                                 st.text(f"Language: {result.get('detected_language', 'N/A')}")
                                 st.text(f"Duration: {result.get('duration', 0):.1f}s")
 
-                                # Transcript snippet
-                                snippet_src = result.get("english_transcript") or result.get("original_transcript", "")
+                                # Transcript snippet - handle "Not Available" placeholder
+                                english_text = result.get("english_text", "")
+                                original_text = result.get("original_text", "")
+                                
+                                if english_text and english_text != "Not Available":
+                                    snippet_src = english_text
+                                else:
+                                    snippet_src = original_text
+                                    
                                 snippet = snippet_src[:200] + ("..." if len(snippet_src) > 200 else "")
                                 st.text_area("Transcript Snippet", snippet, height=150, key=f"snippet_{filename}_{engine_name}")
 
@@ -656,8 +663,15 @@ def page_call_analysis():
                             progress_bar.progress(combo_idx / total_combinations)
                         continue
                     
-                    # Get transcript
-                    transcript = stt_result.get("english_text") or stt_result.get("original_text", "")
+                    # Get transcript - handle "Not Available" string from some engines
+                    english_text = stt_result.get("english_text", "")
+                    original_text = stt_result.get("original_text", "")
+                    
+                    # Use english if available and not placeholder, otherwise use original
+                    if english_text and english_text != "Not Available":
+                        transcript = english_text
+                    else:
+                        transcript = original_text
                     
                     # Debug: Check if transcript is empty
                     if not transcript or not transcript.strip():
