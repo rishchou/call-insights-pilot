@@ -1,4 +1,4 @@
-# ai_engine.py — Gemini-2.5-flash analysis engine for call QA
+# ai_engine.py — Multi-model analysis engine for call QA (Gemini, GPT-4, Claude)
 
 import json
 import time
@@ -8,16 +8,23 @@ from functools import lru_cache
 
 import streamlit as st
 import google.generativeai as genai
+from openai import OpenAI
+from anthropic import Anthropic
 
 
 # ======================================================================================
 # API CLIENT SETUP & CONFIGURATION
 # ======================================================================================
 
-def validate_api_key() -> bool:
-    """Validate Gemini API key is available from st.secrets."""
-    gemini_key = st.secrets.get("GEMINI_API_KEY")
-    return bool(gemini_key)
+def validate_api_key(model: str = "Gemini") -> bool:
+    """Validate API key is available from st.secrets for specified model."""
+    key_mapping = {
+        "Gemini": "GEMINI_API_KEY",
+        "GPT-4": "OPENAI_API_KEY",
+        "Claude": "ANTHROPIC_API_KEY"
+    }
+    key_name = key_mapping.get(model, "GEMINI_API_KEY")
+    return bool(st.secrets.get(key_name))
 
 
 @lru_cache(maxsize=1)
@@ -27,11 +34,28 @@ def get_gemini_client():
     if not api_key:
         raise ValueError("Gemini API key not configured")
     genai.configure(api_key=api_key)
-    # Use gemini-2.5-flash with JSON response format
     return genai.GenerativeModel(
         "gemini-2.0-flash-exp",
         generation_config={"temperature": 0.2, "response_mime_type": "application/json"},
     )
+
+
+@lru_cache(maxsize=1)
+def get_openai_client():
+    """Cached OpenAI client for GPT-4."""
+    api_key = st.secrets.get("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OpenAI API key not configured")
+    return OpenAI(api_key=api_key)
+
+
+@lru_cache(maxsize=1)
+def get_anthropic_client():
+    """Cached Anthropic client for Claude."""
+    api_key = st.secrets.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("Anthropic API key not configured")
+    return Anthropic(api_key=api_key)
 
 
 # ======================================================================================
@@ -365,25 +389,25 @@ def calculate_overall_metrics(parameter_scores: dict) -> dict:
 # MULTI-STAGE ANALYSIS (Gemini only)
 # ======================================================================================
 
-def run_initial_triage(transcript: str, max_retries: int = 2) -> dict:
-    """Run triage analysis with Gemini."""
+def run_initial_triage(transcript: str, max_retries: int = 2, model: str = "Gemini") -> dict:
+    """Run triage analysis with specified model."""
     prompt = get_triage_prompt(transcript)
-    return call_gemini_single(prompt, max_retries)
+    return _call_llm(prompt, model, max_retries)
 
 
-def run_business_outcome(transcript: str, max_retries: int = 2) -> dict:
-    """Run business outcome analysis with Gemini."""
+def run_business_outcome(transcript: str, max_retries: int = 2, model: str = "Gemini") -> dict:
+    """Run business outcome analysis with specified model."""
     prompt = get_business_outcome_prompt(transcript)
-    return call_gemini_single(prompt, max_retries)
+    return _call_llm(prompt, model, max_retries)
 
 
-def run_parameter_scoring(transcript: str, parameters: List[dict], max_retries: int = 2) -> dict:
-    """Score each parameter with Gemini."""
+def run_parameter_scoring(transcript: str, parameters: List[dict], max_retries: int = 2, model: str = "Gemini") -> dict:
+    """Score each parameter with specified model."""
     scores = {}
     
     for p in parameters:
         prompt = get_parameter_scoring_prompt(transcript, p["name"], p["anchors"])
-        result = call_gemini_single(prompt, max_retries)
+        result = _call_llm(prompt, model, max_retries)
         
         if "error" not in result:
             result["weight"] = p.get("weight", 10)
@@ -393,14 +417,62 @@ def run_parameter_scoring(transcript: str, parameters: List[dict], max_retries: 
     return scores
 
 
+def _call_llm(prompt: str, model: str, max_retries: int = 2) -> dict:
+    """Universal LLM caller that routes to appropriate model."""
+    for attempt in range(max_retries):
+        try:
+            if model == "Gemini":
+                client = get_gemini_client()
+                response = client.generate_content(prompt)
+                text = response.text
+            elif model == "GPT-4":
+                client = get_openai_client()
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    response_format={"type": "json_object"}
+                )
+                text = response.choices[0].message.content
+            elif model == "Claude":
+                client = get_anthropic_client()
+                response = client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=4096,
+                    temperature=0.2,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                text = response.content[0].text
+            else:
+                return {"error": f"Unknown model: {model}"}
+            
+            # Parse JSON response
+            text = text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            
+            return json.loads(text)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                return {"error": str(e)}
+            time.sleep(1)
+    return {"error": "Max retries exceeded"}
+
+
 def run_comprehensive_analysis(
     transcript: str, 
     depth: str = "Standard Analysis", 
-    custom_rubric: Optional[str] = None, 
+    custom_rubric: Optional[str] = None,
+    model: str = "Gemini",
     max_retries: int = 2
 ) -> dict:
     """
-    Comprehensive analysis using Gemini:
+    Comprehensive analysis using specified model (Gemini/GPT-4/Claude):
       - triage
       - business outcome
       - parameter scoring
@@ -409,20 +481,20 @@ def run_comprehensive_analysis(
     if not transcript or not transcript.strip():
         return {"error": "Empty transcript provided"}
 
-    if not validate_api_key():
-        return {"error": "Gemini API key not configured"}
+    if not validate_api_key(model):
+        return {"error": f"{model} API key not configured"}
 
     cleaned = sanitize_transcript(transcript)
 
     # Stage 1: triage
-    triage = run_initial_triage(cleaned, max_retries)
+    triage = run_initial_triage(cleaned, max_retries, model)
 
     # Stage 2: business outcomes
-    outcome = run_business_outcome(cleaned, max_retries)
+    outcome = run_business_outcome(cleaned, max_retries, model)
 
     # Stage 3: parameter scoring
     params = get_combined_parameters(depth, custom_rubric)
-    param_scores = run_parameter_scoring(cleaned, params, max_retries)
+    param_scores = run_parameter_scoring(cleaned, params, max_retries, model)
 
     # Stage 4: overall metrics
     overall = calculate_overall_metrics(param_scores) if param_scores else {}
@@ -434,5 +506,6 @@ def run_comprehensive_analysis(
         "parameter_scores": param_scores,
         "overall": overall,
         "depth": depth,
-        "custom_rubric": custom_rubric
+        "custom_rubric": custom_rubric,
+        "model": model
     }

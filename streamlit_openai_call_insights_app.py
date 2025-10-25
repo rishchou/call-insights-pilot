@@ -102,15 +102,40 @@ def page_call_analysis():
             st.error("No transcription engines available. Please configure API keys in secrets.")
             return
         
-        selected_engine = st.selectbox(
-            "Choose transcription engine:",
-            options=available_engines,
-            index=0,
-            help="Select the speech-to-text engine to use for transcription"
-        )
-        st.session_state.selected_engine = selected_engine
+        col1, col2 = st.columns(2)
         
-        st.info(f"**Selected Engine:** {selected_engine}")
+        with col1:
+            selected_engine = st.selectbox(
+                "Choose transcription engine:",
+                options=available_engines,
+                index=0,
+                help="Select the speech-to-text engine to use for transcription"
+            )
+            st.session_state.selected_engine = selected_engine
+        
+        with col2:
+            # Get available analysis models
+            available_models = []
+            if st.secrets.get("GEMINI_API_KEY"):
+                available_models.append("Gemini")
+            if st.secrets.get("OPENAI_API_KEY"):
+                available_models.append("GPT-4")
+            if st.secrets.get("ANTHROPIC_API_KEY"):
+                available_models.append("Claude")
+            
+            if not available_models:
+                st.error("No analysis models available. Please configure API keys.")
+                return
+            
+            selected_model = st.selectbox(
+                "Choose analysis model:",
+                options=available_models,
+                index=0,
+                help="Select the AI model to use for call quality analysis"
+            )
+            st.session_state.selected_model = selected_model
+        
+        st.info(f"**Selected:** {selected_engine} (transcription) + {selected_model} (analysis)")
         
         # Show engine info
         engine_info = {
@@ -118,6 +143,13 @@ def page_call_analysis():
             "Gladia": "Gladia API - Fast async processing with translation",
             "Deepgram": "Deepgram Nova-2 Phonecall - Optimized for phone calls",
             "AssemblyAI": "AssemblyAI - Auto language detection with diarization"
+        }
+        
+        model_info = {
+            "Gemini": "Google Gemini 2.0 Flash - Fast and cost-effective",
+            "GPT-4": "OpenAI GPT-4o - High accuracy and reasoning",
+            "Claude": "Anthropic Claude Sonnet 4 - Excellent comprehension"
+        }
         }
         st.caption(engine_info.get(selected_engine, ""))
         
@@ -226,6 +258,10 @@ def page_call_analysis():
     with analyze_tab:
         st.subheader("2) Configure & Run Analysis")
         
+        # Show selected model
+        selected_model = st.session_state.get("selected_model", "Gemini")
+        st.info(f"**Analysis Model:** {selected_model}")
+        
         ready_files = get_analysis_ready_files()
         
         if not ready_files:
@@ -299,11 +335,12 @@ def page_call_analysis():
                     formatted_transcript = result.get("english_text") or result.get("original_text", "")
                 
                 try:
-                    # Run comprehensive AI analysis with Gemini
+                    # Run comprehensive AI analysis with selected model
                     analysis_result = ai_engine.run_comprehensive_analysis(
                         transcript=formatted_transcript,
                         depth=analysis_depth,
                         custom_rubric=custom_rubric,
+                        model=selected_model,
                         max_retries=2
                     )
                     

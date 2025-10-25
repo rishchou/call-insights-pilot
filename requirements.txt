@@ -4,6 +4,7 @@ numpy
 pandas
 tqdm
 google-generativeai
+anthropic
 plotly
 requests
 deepgram-sdk>=3.11,<4.0
