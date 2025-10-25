@@ -845,10 +845,13 @@ def page_call_analysis():
                 df.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
                 csv_data = csv_buffer.getvalue()
                 
+                # Get filename from session state
+                result_file_name = st.session_state.comparison_results.get("file", "comparison")
+                
                 st.download_button(
                     label="📥 Download Comparison Results CSV",
                     data=csv_data,
-                    file_name=f"model_comparison_{file_name}.csv",
+                    file_name=f"model_comparison_{result_file_name}.csv",
                     mime="text/csv"
                 )
             
