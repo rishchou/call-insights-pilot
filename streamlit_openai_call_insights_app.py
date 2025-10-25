@@ -659,6 +659,21 @@ def page_call_analysis():
                     # Get transcript
                     transcript = stt_result.get("english_text") or stt_result.get("original_text", "")
                     
+                    # Debug: Check if transcript is empty
+                    if not transcript or not transcript.strip():
+                        for llm_model in available_llm:
+                            combo_idx += 1
+                            comparison_data.append({
+                                "STT Engine": stt_engine,
+                                "Analysis Model": llm_model,
+                                "Status": "❌ Empty Transcript",
+                                "Error": f"Transcript is empty. Keys in result: {list(stt_result.keys())}",
+                                "Overall Score": 0,
+                                "Quality": "N/A"
+                            })
+                            progress_bar.progress(combo_idx / total_combinations)
+                        continue
+                    
                     # Step 2: Analyze with each LLM model
                     for llm_model in available_llm:
                         combo_idx += 1
@@ -760,6 +775,22 @@ def page_call_analysis():
             
             df = pd.DataFrame(comp_data)
             
+            # Show summary of what happened
+            st.markdown("#### 📊 Processing Summary")
+            summary_cols = st.columns(4)
+            with summary_cols[0]:
+                st.metric("Total Combinations", len(df))
+            with summary_cols[1]:
+                success_count = len(df[df["Status"] == "✅ Success"])
+                st.metric("Successful", success_count)
+            with summary_cols[2]:
+                failed_count = len(df[df["Status"] != "✅ Success"])
+                st.metric("Failed/Issues", failed_count)
+            with summary_cols[3]:
+                if len(df) > 0:
+                    success_rate = (success_count / len(df)) * 100
+                    st.metric("Success Rate", f"{success_rate:.0f}%")
+            
             # Filter to successful runs only for detailed analysis
             success_df = df[df["Status"] == "✅ Success"].copy()
             
@@ -844,8 +875,12 @@ def page_call_analysis():
             # Show failed combinations if any
             failed_df = df[df["Status"] != "✅ Success"]
             if len(failed_df) > 0:
-                with st.expander(f"⚠️ Failed Combinations ({len(failed_df)})"):
-                    st.dataframe(failed_df[["STT Engine", "Analysis Model", "Status", "Error"]], 
+                st.warning(f"⚠️ {len(failed_df)} combinations had issues. Expand below for details.")
+                with st.expander(f"⚠️ Failed/Problem Combinations ({len(failed_df)})", expanded=True):
+                    display_cols = ["STT Engine", "Analysis Model", "Status"]
+                    if "Error" in failed_df.columns:
+                        display_cols.append("Error")
+                    st.dataframe(failed_df[display_cols], 
                                use_container_width=True, hide_index=True)
             
             # Download comparison results
