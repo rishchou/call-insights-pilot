@@ -90,7 +90,7 @@ def page_call_analysis():
     with c3: metric_card("Files Analyzed", str(analyzed_files))
     st.markdown("---")
 
-    upload_tab, analyze_tab, export_tab = st.tabs(["Upload & Process", "Analyze Results", "Export CSV"])
+    upload_tab, analyze_tab, export_tab, compare_tab = st.tabs(["Upload & Process", "Analyze Results", "Export CSV", "Compare Models"])
 
     with upload_tab:
         st.subheader("1) Select Transcription Engine")
@@ -304,7 +304,7 @@ def page_call_analysis():
         st.markdown("---")
         
         # Run Analysis button
-        if st.button("🚀 Run AI Analysis with Gemini", type="primary"):
+        if st.button(f"🚀 Run AI Analysis with {selected_model}", type="primary"):
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -527,6 +527,295 @@ def page_call_analysis():
         
         st.markdown("---")
         st.info("💡 **Tip**: Use the detailed CSV for in-depth analysis in Excel or other tools.")
+
+    # ---------------------------------------------------------------------------------
+    # TAB 4: COMPARE MODELS
+    # ---------------------------------------------------------------------------------
+    with compare_tab:
+        st.subheader("🔬 Model Comparison Matrix")
+        st.caption("Compare all combinations of transcription engines and analysis models")
+        
+        if not st.session_state.files_metadata:
+            st.warning("No files uploaded. Please upload audio files first.")
+            return
+        
+        # Get available engines and models
+        available_stt = stt_engines.get_available_engines()
+        available_llm = []
+        if st.secrets.get("GEMINI_API_KEY"):
+            available_llm.append("Gemini")
+        if st.secrets.get("OPENAI_API_KEY"):
+            available_llm.append("GPT-4")
+        if st.secrets.get("CLAUDE_API_KEY"):
+            available_llm.append("Claude")
+        
+        if not available_stt or not available_llm:
+            st.error("Need at least one transcription engine and one analysis model configured.")
+            return
+        
+        # File selection
+        all_files = list(st.session_state.files_metadata.keys())
+        selected_file = st.selectbox(
+            "Select a file to compare:",
+            options=all_files,
+            help="Choose one audio file to run through all model combinations"
+        )
+        
+        if not selected_file:
+            return
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            analysis_depth = st.selectbox(
+                "Analysis Depth",
+                options=["Quick Scan", "Standard Analysis", "Deep Dive"],
+                index=0,
+                help="Use Quick Scan for faster comparison"
+            )
+        with col2:
+            custom_rubric = st.selectbox(
+                "Custom Rubric (Optional)",
+                options=["None", "Sales Outbound", "Banking Support", "Technical Support"],
+                index=0
+            )
+            custom_rubric = None if custom_rubric == "None" else custom_rubric
+        
+        st.markdown("---")
+        
+        total_combinations = len(available_stt) * len(available_llm)
+        st.info(f"**{total_combinations} combinations** ({len(available_stt)} STT × {len(available_llm)} Analysis)")
+        
+        if st.button("🚀 Run Full Model Comparison", type="primary"):
+            # Initialize results storage
+            if "comparison_results" not in st.session_state:
+                st.session_state.comparison_results = {}
+            
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            comparison_data = []
+            file_metadata = st.session_state.files_metadata[selected_file]
+            file_content = file_metadata["content"]
+            
+            combo_idx = 0
+            for stt_engine in available_stt:
+                # Step 1: Transcribe with this STT engine
+                status_text.text(f"[{combo_idx + 1}/{total_combinations}] Transcribing with {stt_engine}...")
+                
+                try:
+                    stt_result = stt_engines.process_audio(selected_file, file_content, stt_engine)
+                    
+                    if stt_result.get("status") != "success":
+                        for llm_model in available_llm:
+                            combo_idx += 1
+                            comparison_data.append({
+                                "STT Engine": stt_engine,
+                                "Analysis Model": llm_model,
+                                "Status": "❌ STT Failed",
+                                "Error": stt_result.get("error_message", "Unknown error"),
+                                "Overall Score": None,
+                                "Quality": None
+                            })
+                            progress_bar.progress(combo_idx / total_combinations)
+                        continue
+                    
+                    # Get transcript
+                    transcript = stt_result.get("english_text") or stt_result.get("original_text", "")
+                    
+                    # Step 2: Analyze with each LLM model
+                    for llm_model in available_llm:
+                        combo_idx += 1
+                        status_text.text(f"[{combo_idx}/{total_combinations}] {stt_engine} + {llm_model}...")
+                        progress_bar.progress(combo_idx / total_combinations)
+                        
+                        try:
+                            analysis_result = ai_engine.run_comprehensive_analysis(
+                                transcript=transcript,
+                                depth=analysis_depth,
+                                custom_rubric=custom_rubric,
+                                model=llm_model,
+                                max_retries=2
+                            )
+                            
+                            if analysis_result.get("error"):
+                                comparison_data.append({
+                                    "STT Engine": stt_engine,
+                                    "Analysis Model": llm_model,
+                                    "Status": "❌ Analysis Failed",
+                                    "Error": analysis_result.get("error"),
+                                    "Overall Score": None,
+                                    "Quality": None,
+                                    "Language": stt_result.get("language", "N/A"),
+                                    "Duration": f"{stt_result.get('duration', 0):.1f}s"
+                                })
+                            else:
+                                overall = analysis_result.get("overall", {})
+                                triage = analysis_result.get("triage", {})
+                                business = analysis_result.get("business_outcome", {})
+                                
+                                comparison_data.append({
+                                    "STT Engine": stt_engine,
+                                    "Analysis Model": llm_model,
+                                    "Status": "✅ Success",
+                                    "Overall Score": overall.get("overall_score", 0),
+                                    "Quality": overall.get("quality_bucket", "N/A"),
+                                    "Category": triage.get("category", "N/A"),
+                                    "Sentiment": triage.get("customer_sentiment", "N/A"),
+                                    "Outcome": business.get("business_outcome", "N/A"),
+                                    "Compliance": business.get("compliance_adherence", "N/A"),
+                                    "Language": stt_result.get("language", "N/A"),
+                                    "Duration": f"{stt_result.get('duration', 0):.1f}s",
+                                    "Parameters Scored": overall.get("total_parameters_scored", 0),
+                                    "Low Performers": overall.get("parameters_needing_attention", 0)
+                                })
+                        
+                        except Exception as e:
+                            comparison_data.append({
+                                "STT Engine": stt_engine,
+                                "Analysis Model": llm_model,
+                                "Status": "❌ Exception",
+                                "Error": str(e),
+                                "Overall Score": None,
+                                "Quality": None
+                            })
+                
+                except Exception as e:
+                    for llm_model in available_llm:
+                        combo_idx += 1
+                        comparison_data.append({
+                            "STT Engine": stt_engine,
+                            "Analysis Model": llm_model,
+                            "Status": "❌ Exception",
+                            "Error": str(e),
+                            "Overall Score": None,
+                            "Quality": None
+                        })
+                        progress_bar.progress(combo_idx / total_combinations)
+            
+            progress_bar.progress(1.0)
+            status_text.text("✅ Comparison complete!")
+            
+            # Store results
+            st.session_state.comparison_results = {
+                "file": selected_file,
+                "depth": analysis_depth,
+                "rubric": custom_rubric,
+                "data": comparison_data
+            }
+        
+        # Display comparison results
+        if "comparison_results" in st.session_state and st.session_state.comparison_results:
+            st.markdown("---")
+            st.subheader("📊 Comparison Results")
+            
+            comp_data = st.session_state.comparison_results.get("data", [])
+            if not comp_data:
+                st.info("No comparison data available yet.")
+                return
+            
+            df = pd.DataFrame(comp_data)
+            
+            # Filter to successful runs only for detailed analysis
+            success_df = df[df["Status"] == "✅ Success"].copy()
+            
+            if len(success_df) > 0:
+                # Key metrics comparison
+                st.markdown("#### 🎯 Overall Scores Comparison")
+                
+                # Create pivot table for heatmap
+                pivot_scores = success_df.pivot_table(
+                    values="Overall Score",
+                    index="STT Engine",
+                    columns="Analysis Model",
+                    aggfunc="mean"
+                )
+                
+                # Display as styled dataframe
+                st.dataframe(
+                    pivot_scores.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100)
+                    .format("{:.1f}"),
+                    use_container_width=True
+                )
+                
+                # Quality bucket distribution
+                st.markdown("#### 📈 Quality Distribution")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    quality_counts = success_df.groupby(["Analysis Model", "Quality"]).size().unstack(fill_value=0)
+                    st.bar_chart(quality_counts)
+                
+                with col2:
+                    stt_quality = success_df.groupby(["STT Engine", "Quality"]).size().unstack(fill_value=0)
+                    st.bar_chart(stt_quality)
+                
+                # Detailed comparison table
+                st.markdown("#### 📋 Detailed Results")
+                display_cols = ["STT Engine", "Analysis Model", "Overall Score", "Quality", 
+                               "Category", "Sentiment", "Outcome", "Compliance", "Parameters Scored", "Low Performers"]
+                
+                # Only show columns that exist
+                available_cols = [col for col in display_cols if col in success_df.columns]
+                st.dataframe(success_df[available_cols].sort_values("Overall Score", ascending=False), 
+                            use_container_width=True, hide_index=True)
+                
+                # Statistical summary
+                st.markdown("#### 📊 Statistical Summary")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Highest Score", f"{success_df['Overall Score'].max():.1f}")
+                    best_combo = success_df.loc[success_df['Overall Score'].idxmax()]
+                    st.caption(f"{best_combo['STT Engine']} + {best_combo['Analysis Model']}")
+                
+                with col2:
+                    st.metric("Average Score", f"{success_df['Overall Score'].mean():.1f}")
+                    st.caption(f"Std Dev: {success_df['Overall Score'].std():.1f}")
+                
+                with col3:
+                    st.metric("Score Range", f"{success_df['Overall Score'].max() - success_df['Overall Score'].min():.1f}")
+                    st.caption("Difference between best and worst")
+                
+                # Best performers by category
+                st.markdown("#### 🏆 Best Combinations")
+                
+                best_by_stt = success_df.groupby("STT Engine")["Overall Score"].max()
+                best_by_llm = success_df.groupby("Analysis Model")["Overall Score"].max()
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**Best by STT Engine:**")
+                    for engine, score in best_by_stt.items():
+                        best_llm = success_df[(success_df["STT Engine"] == engine) & 
+                                             (success_df["Overall Score"] == score)]["Analysis Model"].iloc[0]
+                        st.write(f"• {engine}: **{score:.1f}** (with {best_llm})")
+                
+                with col2:
+                    st.markdown("**Best by Analysis Model:**")
+                    for model, score in best_by_llm.items():
+                        best_stt = success_df[(success_df["Analysis Model"] == model) & 
+                                             (success_df["Overall Score"] == score)]["STT Engine"].iloc[0]
+                        st.write(f"• {model}: **{score:.1f}** (with {best_stt})")
+            
+            # Show failed combinations if any
+            failed_df = df[df["Status"] != "✅ Success"]
+            if len(failed_df) > 0:
+                with st.expander(f"⚠️ Failed Combinations ({len(failed_df)})"):
+                    st.dataframe(failed_df[["STT Engine", "Analysis Model", "Status", "Error"]], 
+                               use_container_width=True, hide_index=True)
+            
+            # Download comparison results
+            st.markdown("---")
+            csv_buffer = io.StringIO()
+            df.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
+            csv_data = csv_buffer.getvalue()
+            
+            st.download_button(
+                label="📥 Download Comparison Results CSV",
+                data=csv_data,
+                file_name=f"model_comparison_{selected_file}.csv",
+                mime="text/csv"
+            )
 
 
 def page_rubric_editor():
