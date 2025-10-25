@@ -489,8 +489,6 @@ def page_call_analysis():
             st.dataframe(detailed_df.head(100), use_container_width=True)
         
         st.markdown("---")
-        st.info("        
-        st.markdown("---")
         st.info("💡 **Tip**: Use the detailed CSV for in-depth analysis in Excel or other tools.")
 
 
