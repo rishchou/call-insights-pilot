@@ -733,8 +733,10 @@ def page_compare_models():
                                 overall = analysis_result.get("overall", {})
                                 triage = analysis_result.get("triage", {})
                                 business = analysis_result.get("business_outcome", {})
+                                param_scores = analysis_result.get("parameter_scores", {})
                                 
-                                comparison_data.append({
+                                # Build base result dict
+                                result_dict = {
                                     "STT Engine": stt_engine,
                                     "Analysis Model": llm_model,
                                     "Status": "✅ Success",
@@ -748,7 +750,15 @@ def page_compare_models():
                                     "Duration": f"{stt_result.get('duration', 0):.1f}s",
                                     "Parameters Scored": overall.get("total_parameters_scored", 0),
                                     "Low Performers": overall.get("parameters_needing_attention", 0)
-                                })
+                                }
+                                
+                                # Add all parameter scores to the result
+                                for param_name, param_data in param_scores.items():
+                                    if isinstance(param_data, dict) and "error" not in param_data:
+                                        score = param_data.get("score", "N/A")
+                                        result_dict[f"Param: {param_name}"] = score
+                                
+                                comparison_data.append(result_dict)
                         
                         except Exception as e:
                             comparison_data.append({
@@ -900,6 +910,103 @@ def page_compare_models():
                         best_stt = success_df[(success_df["Analysis Model"] == model) & 
                                              (success_df["Overall Score"] == score)]["STT Engine"].iloc[0]
                         st.write(f"• {model}: **{score:.1f}** (with {best_stt})")
+                
+                # Parameter-by-parameter comparison
+                st.markdown("---")
+                st.markdown("#### 📊 Parameter-by-Parameter Comparison")
+                st.caption("Compare individual parameter scores across all model combinations")
+                
+                # Get all parameter columns
+                param_cols = [col for col in success_df.columns if col.startswith("Param: ")]
+                
+                if param_cols:
+                    # Create tabs for different views
+                    param_tab1, param_tab2, param_tab3 = st.tabs(["📈 Heatmap View", "📋 Detailed Table", "📊 Statistics"])
+                    
+                    with param_tab1:
+                        st.markdown("**Parameter Scores Heatmap** (rows: STT+LLM, columns: parameters)")
+                        
+                        # Create a combined identifier for each model combination
+                        success_df['Model Combo'] = success_df['STT Engine'] + ' + ' + success_df['Analysis Model']
+                        
+                        # Create dataframe with just parameters for heatmap
+                        param_df = success_df[['Model Combo'] + param_cols].set_index('Model Combo')
+                        
+                        # Rename columns to remove "Param: " prefix for cleaner display
+                        param_df.columns = [col.replace("Param: ", "") for col in param_df.columns]
+                        
+                        # Display as styled dataframe with gradient
+                        st.dataframe(
+                            param_df.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=10).format("{:.1f}"),
+                            use_container_width=True
+                        )
+                    
+                    with param_tab2:
+                        st.markdown("**All Parameters - Detailed View**")
+                        
+                        # Show all columns including parameters
+                        detail_cols = ["STT Engine", "Analysis Model", "Overall Score"] + param_cols
+                        detail_df = success_df[detail_cols].copy()
+                        
+                        # Rename parameter columns for cleaner display
+                        rename_dict = {col: col.replace("Param: ", "") for col in param_cols}
+                        detail_df.rename(columns=rename_dict, inplace=True)
+                        
+                        st.dataframe(
+                            detail_df.sort_values("Overall Score", ascending=False),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    
+                    with param_tab3:
+                        st.markdown("**Parameter Statistics Across All Combinations**")
+                        
+                        # Calculate statistics for each parameter
+                        param_stats = []
+                        for param_col in param_cols:
+                            param_name = param_col.replace("Param: ", "")
+                            param_values = pd.to_numeric(success_df[param_col], errors='coerce')
+                            
+                            param_stats.append({
+                                "Parameter": param_name,
+                                "Average Score": param_values.mean(),
+                                "Std Dev": param_values.std(),
+                                "Min Score": param_values.min(),
+                                "Max Score": param_values.max(),
+                                "Range": param_values.max() - param_values.min()
+                            })
+                        
+                        stats_df = pd.DataFrame(param_stats).sort_values("Average Score", ascending=False)
+                        
+                        # Display with color coding
+                        st.dataframe(
+                            stats_df.style.background_gradient(subset=["Average Score"], cmap="RdYlGn", vmin=0, vmax=10).format({
+                                "Average Score": "{:.2f}",
+                                "Std Dev": "{:.2f}",
+                                "Min Score": "{:.1f}",
+                                "Max Score": "{:.1f}",
+                                "Range": "{:.1f}"
+                            }),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Show best and worst performing parameters
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("**🏆 Top 5 Parameters** (by average)")
+                            top_params = stats_df.head(5)
+                            for _, row in top_params.iterrows():
+                                st.write(f"• **{row['Parameter']}**: {row['Average Score']:.2f}/10")
+                        
+                        with col2:
+                            st.markdown("**⚠️ Bottom 5 Parameters** (by average)")
+                            bottom_params = stats_df.tail(5)
+                            for _, row in bottom_params.iterrows():
+                                st.write(f"• **{row['Parameter']}**: {row['Average Score']:.2f}/10")
+                else:
+                    st.info("No parameter scores found in the analysis results.")
             
             # Show failed combinations if any
             failed_df = df[df["Status"] != "✅ Success"]
