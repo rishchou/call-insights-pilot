@@ -45,6 +45,10 @@ def initialize_session_state():
         st.session_state.selected_engine = "Whisper"
     if "comparison_cache" not in st.session_state:
         st.session_state.comparison_cache = {}
+    if "selected_branch" not in st.session_state:
+        st.session_state.selected_branch = "India"
+    if "call_direction" not in st.session_state:
+        st.session_state.call_direction = "Inbound"
     
     # Production demo session state
     if "demo_screen" not in st.session_state:
@@ -176,7 +180,30 @@ def page_call_analysis():
         st.caption("💡 Tip: You can upload the same file multiple times with different engines to compare transcription quality.")
         
         st.markdown("---")
-        st.subheader("2) Upload Audio Files")
+        st.subheader("2) Call Details & Upload")
+        
+        # Branch and call direction selection
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_branch = st.selectbox(
+                "📍 Select Branch",
+                options=["India", "Nigeria", "Morocco", "Saudi Arabia", "Dubai"],
+                index=0,
+                help="Choose the branch location for this call"
+            )
+            st.session_state.selected_branch = selected_branch
+        
+        with col2:
+            call_direction = st.radio(
+                "📞 Call Direction",
+                options=["Inbound", "Outbound"],
+                horizontal=True,
+                help="Select whether this is an inbound or outbound call"
+            )
+            st.session_state.call_direction = call_direction
+        
+        st.markdown("---")
+        st.subheader("3) Upload Audio Files")
         files = st.file_uploader(
             "Drag & drop audio files here", 
             type=stt_engines.SUPPORTED_FORMATS, 
@@ -209,7 +236,11 @@ def page_call_analysis():
                 
                 # Store file metadata if not already stored
                 if file.name not in st.session_state.files_metadata:
-                    st.session_state.files_metadata[file.name] = {**validation["file_info"]}
+                    st.session_state.files_metadata[file.name] = {
+                        **validation["file_info"],
+                        "branch": st.session_state.selected_branch,
+                        "call_direction": st.session_state.call_direction
+                    }
                 
                 st.write(f"---")
                 st.write(f"Processing **{file.name}** with **{selected_engine}**...")
@@ -390,10 +421,17 @@ def page_call_analysis():
                     analysis_result["duration"] = result.get("duration", 0)
                     analysis_result["engine"] = result.get("engine", "")
                     
+                    # Get branch and call direction from file metadata
+                    file_meta = st.session_state.files_metadata.get(filename, {})
+                    analysis_result["branch"] = file_meta.get("branch", "N/A")
+                    analysis_result["call_direction"] = file_meta.get("call_direction", "N/A")
+                    
                     st.session_state.analysis_results[filename] = {
                         "stt_result": result,
                         "analysis": analysis_result,
-                        "rubric": analysis_depth
+                        "rubric": analysis_depth,
+                        "branch": analysis_result["branch"],
+                        "call_direction": analysis_result["call_direction"]
                     }
                 except Exception as e:
                     st.error(f"Analysis failed for {filename}: {str(e)}")
@@ -422,6 +460,15 @@ def page_call_analysis():
                         continue
                     
                     analysis = result.get("analysis", {})
+                    
+                    # Display branch and call direction
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("📍 Branch", analysis.get("branch", "N/A"))
+                    with col2:
+                        st.metric("📞 Call Direction", analysis.get("call_direction", "N/A"))
+                    
+                    st.markdown("---")
                     
                     # Display triage info
                     triage = analysis.get("triage", {})
@@ -590,6 +637,27 @@ def page_compare_models():
         
         # Upload file for comparison
         st.markdown("### 📤 Upload Audio File for Comparison")
+        
+        # Branch and call direction selection
+        col1, col2 = st.columns(2)
+        with col1:
+            comparison_branch = st.selectbox(
+                "📍 Select Branch",
+                options=["India", "Nigeria", "Morocco", "Saudi Arabia", "Dubai"],
+                index=0,
+                key="comparison_branch",
+                help="Choose the branch location for this call"
+            )
+        
+        with col2:
+            comparison_direction = st.radio(
+                "📞 Call Direction",
+                options=["Inbound", "Outbound"],
+                horizontal=True,
+                key="comparison_direction",
+                help="Select whether this is an inbound or outbound call"
+            )
+        
         comparison_file = st.file_uploader(
             "Upload a single audio file to test all model combinations",
             type=stt_engines.SUPPORTED_FORMATS,
@@ -740,6 +808,8 @@ def page_compare_models():
                                     "STT Engine": stt_engine,
                                     "Analysis Model": llm_model,
                                     "Status": "✅ Success",
+                                    "Branch": comparison_branch,
+                                    "Call Direction": comparison_direction,
                                     "Overall Score": overall.get("overall_score", 0),
                                     "Quality": overall.get("quality_bucket", "N/A"),
                                     "Category": triage.get("category", "N/A"),
@@ -871,7 +941,7 @@ def page_compare_models():
                 
                 # Detailed comparison table
                 st.markdown("#### 📋 Detailed Results")
-                display_cols = ["STT Engine", "Analysis Model", "Overall Score", "Quality", 
+                display_cols = ["STT Engine", "Analysis Model", "Branch", "Call Direction", "Overall Score", "Quality", 
                                "Category", "Sentiment", "Outcome", "Compliance", "Parameters Scored", "Low Performers"]
                 
                 # Only show columns that exist
@@ -1394,8 +1464,31 @@ def page_production_demo():
             
             st.markdown("---")
             
+            # Branch and Call Direction
+            st.subheader("4️⃣ Call Details")
+            col1, col2 = st.columns(2)
+            with col1:
+                demo_branch = st.selectbox(
+                    "📍 Select Branch",
+                    options=["India", "Nigeria", "Morocco", "Saudi Arabia", "Dubai"],
+                    index=0,
+                    key="demo_branch"
+                )
+                st.session_state.demo_config["branch"] = demo_branch
+            
+            with col2:
+                demo_direction = st.radio(
+                    "📞 Call Direction",
+                    options=["Inbound", "Outbound"],
+                    horizontal=True,
+                    key="demo_direction"
+                )
+                st.session_state.demo_config["call_direction"] = demo_direction
+            
+            st.markdown("---")
+            
             # File Upload
-            st.subheader("4️⃣ Upload Call Recording")
+            st.subheader("5️⃣ Upload Call Recording")
             uploaded_file = st.file_uploader(
                 "Upload audio file (WAV, MP3, M4A, etc.)",
                 type=stt_engines.SUPPORTED_FORMATS,
