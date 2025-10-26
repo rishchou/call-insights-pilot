@@ -1,0 +1,1768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CallQA.ai - Interactive Demo</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .demo-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 1200px;
+            width: 100%;
+            min-height: 700px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .screen {
+            display: none;
+            padding: 40px;
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        .screen.active {
+            display: block;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .logo {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #6B7280;
+            font-size: 1rem;
+        }
+        
+        h2 {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+            color: #111827;
+        }
+        
+        .description {
+            color: #6B7280;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+        
+        .option-card {
+            border: 2px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .option-card:hover {
+            border-color: #667eea;
+            background: #F9FAFB;
+            transform: translateX(4px);
+        }
+        
+        .option-card.selected {
+            border-color: #667eea;
+            background: #EEF2FF;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+        
+        .option-card input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+        }
+        
+        .option-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #111827;
+        }
+        
+        .option-desc {
+            color: #6B7280;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+        
+        .badge {
+            display: inline-block;
+            background: #10B981;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #374151;
+            font-size: 0.875rem;
+        }
+        
+        input[type="text"],
+        input[type="email"],
+        input[type="tel"],
+        select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #E5E7EB;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            font-family: 'Inter', sans-serif;
+        }
+        
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Inter', sans-serif;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+        
+        .btn-secondary:hover {
+            background: #F9FAFB;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 30px;
+        }
+        
+        .client-card {
+            border: 2px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #F9FAFB;
+        }
+        
+        .client-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .client-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: #111827;
+        }
+        
+        .checkbox-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+        
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        
+        .checkbox-label input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+        
+        .param-chip {
+            display: inline-block;
+            background: rgba(102, 126, 234, 0.1);
+            color: #667eea;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin: 4px;
+            border: 1px solid rgba(102, 126, 234, 0.3);
+        }
+        
+        .param-chip.compliance {
+            background: rgba(239, 68, 68, 0.1);
+            color: #EF4444;
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+        
+        .preview-box {
+            background: #F3F4F6;
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        
+        .preview-title {
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #374151;
+            font-size: 0.875rem;
+        }
+        
+        .success-screen {
+            text-align: center;
+            padding: 60px 40px;
+        }
+        
+        .success-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+        
+        .action-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        
+        .action-card {
+            background: #F9FAFB;
+            border: 2px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .action-card:hover {
+            border-color: #667eea;
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        }
+        
+        .action-icon {
+            font-size: 2.5rem;
+            margin-bottom: 16px;
+        }
+        
+        .action-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #111827;
+        }
+        
+        .action-desc {
+            font-size: 0.875rem;
+            color: #6B7280;
+            margin-bottom: 16px;
+        }
+        
+        /* Dashboard Styles */
+        .dashboard {
+            padding: 0;
+        }
+        
+        .dashboard-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .dashboard-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .dashboard-subtitle {
+            opacity: 0.9;
+            margin-top: 4px;
+        }
+        
+        .dashboard-content {
+            padding: 40px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: white;
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        }
+        
+        .stat-label {
+            color: #6B7280;
+            font-size: 0.875rem;
+            margin-bottom: 8px;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #111827;
+            margin-bottom: 8px;
+        }
+        
+        .stat-trend {
+            font-size: 0.875rem;
+            color: #10B981;
+        }
+        
+        .client-table {
+            background: white;
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 30px;
+        }
+        
+        .table-header {
+            background: #F9FAFB;
+            padding: 16px 24px;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 1px solid #E5E7EB;
+        }
+        
+        .table-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+            gap: 20px;
+            padding: 20px 24px;
+            border-bottom: 1px solid #E5E7EB;
+            align-items: center;
+        }
+        
+        .table-row:hover {
+            background: #F9FAFB;
+        }
+        
+        .client-name {
+            font-weight: 600;
+            color: #111827;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .score-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+        
+        .score-good { background: #D1FAE5; color: #065F46; }
+        .score-warning { background: #FEF3C7; color: #92400E; }
+        
+        .trend-up { color: #10B981; }
+        .trend-down { color: #EF4444; }
+        
+        .alert-box {
+            background: white;
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            border-left: 4px solid;
+        }
+        
+        .alert-box.critical { border-left-color: #EF4444; background: #FEE2E2; }
+        .alert-box.warning { border-left-color: #F59E0B; background: #FEF3C7; }
+        .alert-box.success { border-left-color: #10B981; background: #D1FAE5; }
+        
+        .alert-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #111827;
+        }
+        
+        .alert-desc {
+            color: #374151;
+            font-size: 0.875rem;
+            line-height: 1.6;
+        }
+        
+        .progress-indicator {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .progress-steps {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+        
+        .progress-step {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #E5E7EB;
+            transition: all 0.3s ease;
+        }
+        
+        .progress-step.active {
+            background: #667eea;
+            transform: scale(1.3);
+        }
+        
+        .progress-step.completed {
+            background: #10B981;
+        }
+        
+        .demo-nav {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            padding: 12px 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 0.875rem;
+            color: #6B7280;
+            z-index: 1000;
+        }
+        
+        @media (max-width: 768px) {
+            .demo-container {
+                border-radius: 0;
+                min-height: 100vh;
+            }
+            
+            .screen {
+                padding: 20px;
+            }
+            
+            .table-row {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <!-- Screen 1: Welcome -->
+        <div class="screen active" id="screen-welcome">
+            <div class="header">
+                <div class="logo">🎙️ CallQA.ai</div>
+                <div class="subtitle">AI-Powered Call Center Quality Assurance</div>
+            </div>
+            
+            <h2>Welcome! Let's get you set up.</h2>
+            <p class="description">First, tell us about your organization so we can customize your experience.</p>
+            
+            <div class="option-card" onclick="selectAccountType('bpo')">
+                <input type="radio" name="account-type" id="bpo" value="bpo">
+                <div class="option-title">🏢 BPO / Outsourcing Company</div>
+                <div class="option-desc">
+                    Handle multiple clients with different industries and processes
+                    <br><br>
+                    <strong>Best for:</strong> Call centers, BPOs, outsourcing firms handling multiple brands
+                </div>
+            </div>
+            
+            <div class="option-card" onclick="selectAccountType('enterprise')">
+                <input type="radio" name="account-type" id="enterprise" value="enterprise">
+                <div class="option-title">🏛️ Enterprise / Single Company</div>
+                <div class="option-desc">
+                    One company with internal call center operations in one industry
+                    <br><br>
+                    <strong>Best for:</strong> Banks, airlines, insurance, e-commerce with own call centers
+                </div>
+            </div>
+            
+            <div class="form-group" style="margin-top: 30px;">
+                <label>Company Name *</label>
+                <input type="text" id="company-name" placeholder="Enter your company name" value="Teleperformance India">
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="form-group">
+                    <label>Your Name *</label>
+                    <input type="text" placeholder="John Doe" value="Vikram Sharma">
+                </div>
+                <div class="form-group">
+                    <label>Email *</label>
+                    <input type="email" placeholder="you@company.com" value="vikram@teleperformance.in">
+                </div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="tel" placeholder="+91 98765 43210" value="+91 98765 43210">
+                </div>
+                <div class="form-group">
+                    <label>Country *</label>
+                    <select>
+                        <option value="in" selected>India</option>
+                        <option value="ph">Philippines</option>
+                        <option value="za">South Africa</option>
+                        <option value="eg">Egypt</option>
+                        <option value="ae">UAE</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="button-group">
+                <button class="btn btn-primary" onclick="goToScreen('screen-add-clients')" style="flex: 1;">
+                    Continue to Setup →
+                </button>
+            </div>
+        </div>
+
+        <!-- Screen 2: Add Clients (BPO Path) -->
+        <div class="screen" id="screen-add-clients">
+            <div class="progress-indicator">
+                <div class="progress-steps">
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step active"></div>
+                    <div class="progress-step"></div>
+                    <div class="progress-step"></div>
+                    <div class="progress-step"></div>
+                </div>
+                <div style="color: #6B7280; font-size: 0.875rem;">Step 2 of 5: Add Clients</div>
+            </div>
+            
+            <h2>📊 Client Management</h2>
+            <p class="description">Let's add the clients you service. You can add more anytime from Settings.</p>
+            
+            <div class="client-card">
+                <div class="client-header">
+                    <div class="client-title">Client 1</div>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.875rem;">Remove</button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Client Name *</label>
+                    <input type="text" value="Delta Airlines" placeholder="Enter client name">
+                </div>
+                
+                <div class="form-group">
+                    <label>Industry *</label>
+                    <select>
+                        <option value="">Select industry...</option>
+                        <option value="travel" selected>✈️ Travel & Hospitality</option>
+                        <option value="banking">🏦 Banking & Financial Services</option>
+                        <option value="insurance">🛡️ Insurance</option>
+                        <option value="telecom">📡 Telecom</option>
+                        <option value="ecommerce">🛒 E-commerce & Retail</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>What processes do you handle for this client?</label>
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked>
+                            <span>Customer Support - Flights</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked>
+                            <span>Customer Support - Hotels</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" checked>
+                            <span>Sales - Mileage Program</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox">
+                            <span>Sales - Credit Card Offers</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox">
+                            <span>Technical Support</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Billing Code (Optional)</label>
+                    <input type="text" value="DL-001" placeholder="For your invoicing">
+                </div>
+            </div>
+            
+            <button class="btn btn-secondary" style="width: 100%; margin-bottom: 20px;" onclick="addAnotherClient()">
+                + Add Another Client
+            </button>
+            
+            <div class="preview-box">
+                <div class="preview-title">Current Setup:</div>
+                <div style="color: #6B7280; font-size: 0.875rem;">
+                    • 1 client configured<br>
+                    • 3 processes selected<br>
+                    • Travel & Hospitality industry
+                </div>
+            </div>
+            
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="goToScreen('screen-welcome')">
+                    ← Back
+                </button>
+                <button class="btn btn-primary" onclick="goToScreen('screen-add-agents')" style="flex: 1;">
+                    Continue to Agents →
+                </button>
+            </div>
+        </div>
+
+        <!-- Screen 3: Add Agents -->
+        <div class="screen" id="screen-add-agents">
+            <div class="progress-indicator">
+                <div class="progress-steps">
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step active"></div>
+                    <div class="progress-step"></div>
+                    <div class="progress-step"></div>
+                </div>
+                <div style="color: #6B7280; font-size: 0.875rem;">Step 3 of 5: Add Agents</div>
+            </div>
+            
+            <h2>👥 Agent & Team Configuration</h2>
+            <p class="description">Add your agents to start tracking performance.</p>
+            
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px;">
+                <div class="action-card" onclick="showImportOptions()">
+                    <div class="action-icon">📄</div>
+                    <div class="action-title">Import from CSV</div>
+                    <div class="action-desc">Upload a CSV file with agent details</div>
+                    <button class="btn btn-primary" style="width: 100%;">Choose File</button>
+                    <div style="margin-top: 8px; font-size: 0.75rem; color: #6B7280;">
+                        <a href="#" style="color: #667eea;">Download template</a>
+                    </div>
+                </div>
+                
+                <div class="action-card" onclick="connectTelephony()">
+                    <div class="action-icon">🔌</div>
+                    <div class="action-title">Connect Phone System</div>
+                    <div class="action-desc">Import agents from 3CX, Genesys, or Five9</div>
+                    <button class="btn btn-primary" style="width: 100%;">Connect System</button>
+                </div>
+                
+                <div class="action-card" onclick="addManually()">
+                    <div class="action-icon">✏️</div>
+                    <div class="action-title">Add Manually</div>
+                    <div class="action-desc">Enter agent details one by one</div>
+                    <button class="btn btn-secondary" style="width: 100%;">Add Agent</button>
+                </div>
+            </div>
+            
+            <div class="preview-box">
+                <div class="preview-title">✅ 45 Agents Imported (Sample Data)</div>
+                <div style="margin-top: 12px; font-size: 0.875rem; color: #374151;">
+                    <strong>Preview:</strong> Sarah J., Raj P., Maria S., John D., Priya K. +40 more
+                </div>
+            </div>
+            
+            <div style="margin-top: 30px; padding: 20px; background: #F9FAFB; border-radius: 12px; border: 1px solid #E5E7EB;">
+                <label class="checkbox-label" style="font-size: 1rem;">
+                    <input type="checkbox" checked>
+                    <span><strong>Create teams now</strong> (Optional - you can do this later)</span>
+                </label>
+            </div>
+            
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="goToScreen('screen-add-clients')">
+                    ← Back
+                </button>
+                <button class="btn btn-secondary" onclick="goToScreen('screen-parameters')">
+                    Skip Teams
+                </button>
+                <button class="btn btn-primary" onclick="goToScreen('screen-create-teams')" style="flex: 1;">
+                    Create Teams →
+                </button>
+            </div>
+        </div>
+
+        <!-- Screen 4: Create Teams -->
+        <div class="screen" id="screen-create-teams">
+            <div class="progress-indicator">
+                <div class="progress-steps">
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step active"></div>
+                    <div class="progress-step"></div>
+                </div>
+                <div style="color: #6B7280; font-size: 0.875rem;">Step 4 of 5: Create Teams</div>
+            </div>
+            
+            <h2>👨‍👩‍👧‍👦 Create Teams</h2>
+            <p class="description">Organize agents into teams for better management and reporting.</p>
+            
+            <div class="client-card">
+                <div class="client-header">
+                    <div class="client-title">Team 1</div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="form-group">
+                        <label>Team Name *</label>
+                        <input type="text" value="Delta Team A" placeholder="e.g., Morning Shift A">
+                    </div>
+                    <div class="form-group">
+                        <label>Team Lead *</label>
+                        <select>
+                            <option value="">Select team lead...</option>
+                            <option value="mike" selected>Mike Rodriguez</option>
+                            <option value="sarah">Sarah Johnson</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="form-group">
+                        <label>Client *</label>
+                        <select>
+                            <option value="delta" selected>Delta Airlines</option>
+                            <option value="amazon">Amazon</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Process *</label>
+                        <select>
+                            <option value="cs-flights" selected>Customer Support - Flights</option>
+                            <option value="cs-hotels">Customer Support - Hotels</option>
+                            <option value="sales">Sales - Mileage Program</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="form-group">
+                        <label>Shift</label>
+                        <select>
+                            <option value="morning" selected>Morning (6 AM - 2 PM)</option>
+                            <option value="evening">Evening (2 PM - 10 PM)</option>
+                            <option value="night">Night (10 PM - 6 AM)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Location</label>
+                        <select>
+                            <option value="bangalore" selected>Bangalore</option>
+                            <option value="manila">Manila</option>
+                            <option value="delhi">Delhi</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Select Agents (15 selected)</label>
+                    <div style="background: white; padding: 12px; border: 1px solid #E5E7EB; border-radius: 8px; max-height: 150px; overflow-y: auto;">
+                        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                            <span class="param-chip">Sarah J.</span>
+                            <span class="param-chip">Raj P.</span>
+                            <span class="param-chip">Maria S.</span>
+                            <span class="param-chip">John D.</span>
+                            <span class="param-chip">Priya K.</span>
+                            <span class="param-chip">+10 more</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <button class="btn btn-secondary" style="width: 100%; margin-bottom: 20px;">
+                + Create Another Team
+            </button>
+            
+            <div class="preview-box">
+                <div class="preview-title">Current Setup:</div>
+                <div style="color: #6B7280; font-size: 0.875rem;">
+                    • 1 team configured<br>
+                    • 15 agents assigned<br>
+                    • Delta Airlines - Customer Support
+                </div>
+            </div>
+            
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="goToScreen('screen-add-agents')">
+                    ← Back
+                </button>
+                <button class="btn btn-primary" onclick="goToScreen('screen-parameters')" style="flex: 1;">
+                    Continue to Parameters →
+                </button>
+            </div>
+        </div>
+
+        <!-- Screen 5: QA Parameters -->
+        <div class="screen" id="screen-parameters">
+            <div class="progress-indicator">
+                <div class="progress-steps">
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step completed"></div>
+                    <div class="progress-step active"></div>
+                </div>
+                <div style="color: #6B7280; font-size: 0.875rem;">Step 5 of 5: Review Parameters</div>
+            </div>
+            
+            <h2>⚙️ QA Parameters Configuration</h2>
+            <p class="description">We've loaded industry best practices for your clients. Review and customize if needed.</p>
+            
+            <div style="background: #F9FAFB; padding: 20px; border-radius: 12px; border: 1px solid #E5E7EB; margin-bottom: 24px;">
+                <div style="margin-bottom: 12px;">
+                    <label style="font-size: 0.875rem; margin-bottom: 8px;">Viewing parameters for:</label>
+                    <select style="width: 100%;">
+                        <option value="delta-cs">Delta Airlines > Customer Support - Flights</option>
+                        <option value="delta-hotels">Delta Airlines > Customer Support - Hotels</option>
+                        <option value="delta-sales">Delta Airlines > Sales - Mileage Program</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 24px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h3 style="font-size: 1rem; font-weight: 600; color: #374151;">STANDARD QA PARAMETERS</h3>
+                    <span style="color: #667eea; font-weight: 600;">40% Weight</span>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    <span class="param-chip">Greeting (10%)</span>
+                    <span class="param-chip">Active Listening (10%)</span>
+                    <span class="param-chip">Empathy (10%)</span>
+                    <span class="param-chip">Problem Resolution (10%)</span>
+                </div>
+                <button class="btn btn-secondary" style="margin-top: 12px; padding: 6px 12px; font-size: 0.875rem;">
+                    Edit Weights
+                </button>
+            </div>
+            
+            <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 24px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <div>
+                        <h3 style="font-size: 1rem; font-weight: 600; color: #374151;">TRAVEL-SPECIFIC PARAMETERS</h3>
+                        <div style="font-size: 0.75rem; color: #6B7280; margin-top: 4px;">Industry best practices for Travel & Hospitality</div>
+                    </div>
+                    <span style="color: #667eea; font-weight: 600;">60% Weight</span>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    <span class="param-chip">Personalization (15%)</span>
+                    <span class="param-chip">Flexibility Offered (12%)</span>
+                    <span class="param-chip">Excitement Generation (10%)</span>
+                    <span class="param-chip">EMI/Payment Plans (15%) 🔥</span>
+                    <span class="param-chip">Cancellation Handling (8%)</span>
+                </div>
+                <button class="btn btn-secondary" style="margin-top: 12px; padding: 6px 12px; font-size: 0.875rem;">
+                    + Add Custom Parameter
+                </button>
+            </div>
+            
+            <div style="background: #FEE2E2; border: 1px solid #FCA5A5; border-left: 4px solid #EF4444; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+                <div style="font-weight: 600; color: #991B1B; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+                    🔒 COMPLIANCE PARAMETERS (Critical)
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    <span class="param-chip compliance">Data Privacy (Auto-Fail)</span>
+                    <span class="param-chip compliance">Brand Voice (Auto-Flag)</span>
+                </div>
+            </div>
+            
+            <div class="preview-box">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="preview-title">Total Weight: 100% ✓</div>
+                    <div style="display: flex; gap: 12px;">
+                        <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem;">
+                            Reset to Defaults
+                        </button>
+                        <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem;">
+                            Copy to Other Process
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 30px; padding: 16px; background: #EEF2FF; border-radius: 8px; border: 1px solid #C7D2FE;">
+                <label class="checkbox-label">
+                    <input type="checkbox" checked>
+                    <span>Use these parameters for all clients (You can customize per client later)</span>
+                </label>
+            </div>
+            
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="goToScreen('screen-create-teams')">
+                    ← Back
+                </button>
+                <button class="btn btn-primary" onclick="goToScreen('screen-complete')" style="flex: 1;">
+                    Complete Setup →
+                </button>
+            </div>
+        </div>
+
+        <!-- Screen 6: Setup Complete -->
+        <div class="screen" id="screen-complete">
+            <div class="success-screen">
+                <div class="success-icon">🎉</div>
+                <h2 style="font-size: 2rem; margin-bottom: 16px;">Setup Complete!</h2>
+                <p class="description" style="font-size: 1.125rem; max-width: 600px; margin: 0 auto 40px;">
+                    Your CallQA.ai account is ready. Here's what we've configured:
+                </p>
+                
+                <div style="background: #F9FAFB; border-radius: 12px; padding: 24px; max-width: 500px; margin: 0 auto 40px; text-align: left;">
+                    <div style="display: grid; gap: 12px;">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: #6B7280;">Account Type:</span>
+                            <span style="font-weight: 600;">BPO (Multi-Client)</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: #6B7280;">Clients Configured:</span>
+                            <span style="font-weight: 600;">1 client (Delta Airlines)</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: #6B7280;">Agents Imported:</span>
+                            <span style="font-weight: 600;">45 agents</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: #6B7280;">Teams Created:</span>
+                            <span style="font-weight: 600;">1 team (Delta Team A)</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: #6B7280;">QA Parameters:</span>
+                            <span style="font-weight: 600;">9 configured</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <h3 style="margin-bottom: 24px; color: #374151;">What would you like to do first?</h3>
+                
+                <div class="action-cards">
+                    <div class="action-card" onclick="goToScreen('dashboard-bpo')">
+                        <div class="action-icon">📊</div>
+                        <div class="action-title">View Dashboard</div>
+                        <div class="action-desc">See your multi-client operations overview with sample data</div>
+                        <button class="btn btn-primary" style="width: 100%;">Open Dashboard</button>
+                    </div>
+                    
+                    <div class="action-card">
+                        <div class="action-icon">📤</div>
+                        <div class="action-title">Upload Test Call</div>
+                        <div class="action-desc">Upload a recording to see AI analysis in action (2-3 min)</div>
+                        <button class="btn btn-secondary" style="width: 100%;">Upload Call</button>
+                    </div>
+                    
+                    <div class="action-card">
+                        <div class="action-icon">🔌</div>
+                        <div class="action-title">Connect Phone System</div>
+                        <div class="action-desc">Auto-process calls from 3CX, Genesys, or Five9 (5-10 min)</div>
+                        <button class="btn btn-secondary" style="width: 100%;">Connect System</button>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 30px; padding: 16px; background: #FEF3C7; border-radius: 8px; border: 1px solid #FCD34D;">
+                    <div style="font-size: 0.875rem; color: #78350F;">
+                        💡 <strong>Pro Tip:</strong> Connect your phone system to automatically analyze 100% of your calls in real-time!
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard: BPO Operations Manager -->
+        <div class="screen dashboard" id="dashboard-bpo">
+            <div class="dashboard-header">
+                <div>
+                    <div class="dashboard-title">🎙️ CallQA.ai - Teleperformance India</div>
+                    <div class="dashboard-subtitle">Operations Manager: Vikram Sharma</div>
+                </div>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <div style="font-size: 0.875rem; opacity: 0.9;">Last sync: 2 min ago</div>
+                    <button class="btn btn-primary" style="padding: 10px 20px;">
+                        + New Analysis
+                    </button>
+                </div>
+            </div>
+            
+            <div class="dashboard-content">
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;">
+                        <select style="padding: 10px 16px; border: 1px solid #E5E7EB; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                            <option>All Clients</option>
+                            <option>Delta Airlines</option>
+                            <option>Amazon</option>
+                            <option>Providian Bank</option>
+                        </select>
+                        <select style="padding: 10px 16px; border: 1px solid #E5E7EB; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                            <option>Last 30 Days</option>
+                            <option>Last 7 Days</option>
+                            <option>This Month</option>
+                        </select>
+                        <button class="btn btn-secondary" style="padding: 10px 20px; margin-left: auto;">
+                            📥 Export Report
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Active Clients</div>
+                        <div class="stat-value">3</div>
+                        <div class="stat-trend">All clients active ✓</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Calls</div>
+                        <div class="stat-value">8,492</div>
+                        <div class="stat-trend">↗️ +12% vs last month</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Avg Quality Score</div>
+                        <div class="stat-value">83.7</div>
+                        <div class="stat-trend">↗️ +3.1 points</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Compliance Rate</div>
+                        <div class="stat-value">96%</div>
+                        <div class="stat-trend">Above target (95%) ✓</div>
+                    </div>
+                </div>
+                
+                <div class="client-table">
+                    <div class="table-header">
+                        CLIENT PERFORMANCE
+                    </div>
+                    <div class="table-row" style="background: #F9FAFB; font-weight: 600; font-size: 0.875rem; color: #6B7280;">
+                        <div>Client</div>
+                        <div>Calls</div>
+                        <div>Score</div>
+                        <div>Compliance</div>
+                        <div>SLA Status</div>
+                    </div>
+                    <div class="table-row">
+                        <div class="client-name">
+                            ✈️ Delta Airlines
+                        </div>
+                        <div>2,847</div>
+                        <div><span class="score-badge score-good">86.5</span></div>
+                        <div>98%</div>
+                        <div style="text-align: center;">✅</div>
+                    </div>
+                    <div class="table-row">
+                        <div class="client-name">
+                            🛒 Amazon
+                        </div>
+                        <div>2,234</div>
+                        <div><span class="score-badge score-warning">81.2</span></div>
+                        <div>94%</div>
+                        <div style="text-align: center;">⚠️</div>
+                    </div>
+                    <div class="table-row">
+                        <div class="client-name">
+                            🏦 Providian Bank
+                        </div>
+                        <div>1,923</div>
+                        <div><span class="score-badge score-good">84.8</span></div>
+                        <div>99%</div>
+                        <div style="text-align: center;">✅</div>
+                    </div>
+                    <div class="table-row">
+                        <div class="client-name">
+                            🏨 Expedia
+                        </div>
+                        <div>1,488</div>
+                        <div><span class="score-badge score-good">82.1</span></div>
+                        <div>96%</div>
+                        <div style="text-align: center;">✅</div>
+                    </div>
+                </div>
+                
+                <h3 style="margin: 30px 0 20px 0; font-size: 1.25rem;">🚨 Alerts & Action Items</h3>
+                
+                <div class="alert-box critical">
+                    <div class="alert-title">🔴 CRITICAL: Amazon Order Support - Empathy Scores Low</div>
+                    <div class="alert-desc">
+                        Empathy parameter at 68% (target: 80%). Affecting 12 agents on Team B. 
+                        <strong>Action Required:</strong> Schedule coaching sessions this week.
+                        <div style="margin-top: 12px;">
+                            <button class="btn btn-primary" style="padding: 8px 16px; font-size: 0.875rem; margin-right: 8px;">View Details</button>
+                            <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem;">Schedule Training</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="alert-box warning">
+                    <div class="alert-title">⚠️ WARNING: Providian Bank - KYC Verification Below Target</div>
+                    <div class="alert-desc">
+                        Compliance parameter at 89% (must be 95%+). Immediate review required for regulatory compliance.
+                        <div style="margin-top: 12px;">
+                            <button class="btn btn-primary" style="padding: 8px 16px; font-size: 0.875rem; margin-right: 8px;">Review Calls</button>
+                            <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem;">Alert Team Lead</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="alert-box success">
+                    <div class="alert-title">✅ POSITIVE: Delta Baggage Handling Improved</div>
+                    <div class="alert-desc">
+                        Baggage handling scores up +15% this month. Great coaching work by Team Lead Mike Rodriguez!
+                        <div style="margin-top: 12px;">
+                            <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem; margin-right: 8px;">View Trend</button>
+                            <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem;">Share Best Practices</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 40px; text-align: center; padding: 40px; background: #F9FAFB; border-radius: 12px;">
+                    <h3 style="margin-bottom: 16px;">Want to see more?</h3>
+                    <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+                        <button class="btn btn-primary" onclick="goToScreen('dashboard-teamlead')">
+                            👥 Team Lead View
+                        </button>
+                        <button class="btn btn-secondary" onclick="goToScreen('dashboard-agent')">
+                            👤 Agent View
+                        </button>
+                        <button class="btn btn-secondary" onclick="goToScreen('dashboard-client')">
+                            📊 Client Report View
+                        </button>
+                        <button class="btn btn-secondary" onclick="goToScreen('screen-complete')">
+                            ← Back to Setup
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard: Team Lead View -->
+        <div class="screen dashboard" id="dashboard-teamlead">
+            <div class="dashboard-header">
+                <div>
+                    <div class="dashboard-title">Delta Team A - Customer Support (Flights)</div>
+                    <div class="dashboard-subtitle">Team Lead: Mike Rodriguez | 15 Agents | Morning Shift</div>
+                </div>
+                <button class="btn btn-primary" style="padding: 10px 20px;">
+                    📝 Weekly Report
+                </button>
+            </div>
+            
+            <div class="dashboard-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Team Average</div>
+                        <div class="stat-value">84.2</div>
+                        <div class="stat-trend">↗️ +2.1 points</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Calls Today</div>
+                        <div class="stat-value">287/350</div>
+                        <div class="stat-trend">82% of target</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Compliance</div>
+                        <div class="stat-value">96%</div>
+                        <div class="stat-trend">↗️ +2%</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Team Rank</div>
+                        <div class="stat-value">#1</div>
+                        <div class="stat-trend">Top 10% 🏆</div>
+                    </div>
+                </div>
+                
+                <h3 style="margin: 30px 0 20px 0; font-size: 1.25rem;">👥 Agent Leaderboard</h3>
+                
+                <div class="client-table">
+                    <div class="table-row" style="background: #F9FAFB; font-weight: 600; font-size: 0.875rem; color: #6B7280;">
+                        <div>Rank</div>
+                        <div>Agent</div>
+                        <div>Calls</div>
+                        <div>Score</div>
+                        <div>Trend</div>
+                    </div>
+                    <div class="table-row" style="background: #FEF3C7;">
+                        <div>🥇</div>
+                        <div class="client-name">Sarah J.</div>
+                        <div>24</div>
+                        <div><span class="score-badge score-good">92.3</span></div>
+                        <div class="trend-up">↗️ +4.2</div>
+                    </div>
+                    <div class="table-row">
+                        <div>🥈</div>
+                        <div class="client-name">Raj P.</div>
+                        <div>28</div>
+                        <div><span class="score-badge score-good">89.7</span></div>
+                        <div class="trend-up">↗️ +2.1</div>
+                    </div>
+                    <div class="table-row">
+                        <div>🥉</div>
+                        <div class="client-name">Maria S.</div>
+                        <div>22</div>
+                        <div><span class="score-badge score-good">87.5</span></div>
+                        <div>→ +0.3</div>
+                    </div>
+                    <div class="table-row">
+                        <div>4</div>
+                        <div class="client-name">John D.</div>
+                        <div>19</div>
+                        <div><span class="score-badge score-good">85.1</span></div>
+                        <div class="trend-up">↗️ +3.8</div>
+                    </div>
+                    <div class="table-row">
+                        <div>13</div>
+                        <div class="client-name">Tom R.</div>
+                        <div>18</div>
+                        <div><span class="score-badge score-warning">72.8</span></div>
+                        <div class="trend-down">↘️ -2.5</div>
+                    </div>
+                    <div class="table-row" style="background: #FEE2E2;">
+                        <div>15</div>
+                        <div class="client-name">Lisa M.</div>
+                        <div>16</div>
+                        <div><span class="score-badge score-warning">69.4</span></div>
+                        <div class="trend-down">🔴 -5.1</div>
+                    </div>
+                </div>
+                
+                <h3 style="margin: 30px 0 20px 0; font-size: 1.25rem;">🎯 Coaching Priorities</h3>
+                
+                <div class="alert-box critical">
+                    <div class="alert-title">High Priority: Lisa M. (69.4 avg)</div>
+                    <div class="alert-desc">
+                        Issues: Empathy + Closing techniques weak. Last coached: 18 days ago.
+                        <div style="margin-top: 12px;">
+                            <button class="btn btn-primary" style="padding: 8px 16px; font-size: 0.875rem; margin-right: 8px;">Schedule 1-on-1</button>
+                            <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem;">View Calls</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="alert-box warning">
+                    <div class="alert-title">Moderate Priority: Tom R. (72.8 avg)</div>
+                    <div class="alert-desc">
+                        Issue: Problem Resolution weak. Last coached: 12 days ago.
+                        <div style="margin-top: 12px;">
+                            <button class="btn btn-primary" style="padding: 8px 16px; font-size: 0.875rem; margin-right: 8px;">Schedule 1-on-1</button>
+                            <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem;">View Calls</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 40px; text-align: center; padding: 40px; background: #F9FAFB; border-radius: 12px;">
+                    <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+                        <button class="btn btn-secondary" onclick="goToScreen('dashboard-bpo')">
+                            ← Back to Operations Dashboard
+                        </button>
+                        <button class="btn btn-primary" onclick="goToScreen('dashboard-agent')">
+                            View Agent Dashboard →
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard: Agent View -->
+        <div class="screen dashboard" id="dashboard-agent">
+            <div class="dashboard-header">
+                <div>
+                    <div class="dashboard-title">Agent Dashboard - Sarah Johnson (A1234)</div>
+                    <div class="dashboard-subtitle">Delta Team A | Customer Support - Flights</div>
+                </div>
+                <button class="btn btn-primary" style="padding: 10px 20px;">
+                    📊 My Progress Report
+                </button>
+            </div>
+            
+            <div class="dashboard-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Your Average</div>
+                        <div class="stat-value">92.3 🏆</div>
+                        <div class="stat-trend">↗️ +4.2 points</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Calls This Month</div>
+                        <div class="stat-value">247</div>
+                        <div class="stat-trend">Above target ✓</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Team Rank</div>
+                        <div class="stat-value">#1 / 15</div>
+                        <div class="stat-trend">Top 10% 🥇</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">vs Team Avg</div>
+                        <div class="stat-value">+8.1</div>
+                        <div class="stat-trend">Above average ✅</div>
+                    </div>
+                </div>
+                
+                <h3 style="margin: 30px 0 20px 0; font-size: 1.25rem;">📊 Your Score Breakdown</h3>
+                
+                <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 24px; margin-bottom: 20px;">
+                    <div style="margin-bottom: 20px;">
+                        <strong style="color: #374151;">Standard Parameters:</strong>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>Greeting</span>
+                            <span style="font-weight: 600; color: #10B981;">95 ✅</span>
+                        </div>
+                        <div style="background: #E5E7EB; height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: linear-gradient(90deg, #10B981, #059669); height: 100%; width: 95%;"></div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>Empathy</span>
+                            <span style="font-weight: 600; color: #10B981;">88 ✅</span>
+                        </div>
+                        <div style="background: #E5E7EB; height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: linear-gradient(90deg, #10B981, #059669); height: 100%; width: 88%;"></div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>Problem Solving</span>
+                            <span style="font-weight: 600; color: #10B981;">85 ✅</span>
+                        </div>
+                        <div style="background: #E5E7EB; height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: linear-gradient(90deg, #10B981, #059669); height: 100%; width: 85%;"></div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>Active Listening</span>
+                            <span style="font-weight: 600; color: #10B981;">90 ✅</span>
+                        </div>
+                        <div style="background: #E5E7EB; height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: linear-gradient(90deg, #10B981, #059669); height: 100%; width: 90%;"></div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin: 30px 0 20px 0;">
+                        <strong style="color: #374151;">Travel-Specific Parameters:</strong>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>Personalization</span>
+                            <span style="font-weight: 600; color: #10B981;">98 🌟</span>
+                        </div>
+                        <div style="background: #E5E7EB; height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: linear-gradient(90deg, #10B981, #059669); height: 100%; width: 98%;"></div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>Flexibility Offered</span>
+                            <span style="font-weight: 600; color: #F59E0B;">78 ⚠️</span>
+                        </div>
+                        <div style="background: #E5E7EB; height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: linear-gradient(90deg, #F59E0B, #D97706); height: 100%; width: 78%;"></div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>Excitement Generation</span>
+                            <span style="font-weight: 600; color: #10B981;">96 🌟</span>
+                        </div>
+                        <div style="background: #E5E7EB; height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: linear-gradient(90deg, #10B981, #059669); height: 100%; width: 96%;"></div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>EMI Offering</span>
+                            <span style="font-weight: 600; color: #10B981;">82 ✅</span>
+                        </div>
+                        <div style="background: #E5E7EB; height: 8px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: linear-gradient(90deg, #10B981, #059669); height: 100%; width: 82%;"></div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px; padding: 16px; background: #F3F4F6; border-radius: 8px; font-size: 0.875rem;">
+                        🌟 = Top 10% in team | ⚠️ = Below target
+                    </div>
+                </div>
+                
+                <h3 style="margin: 30px 0 20px 0; font-size: 1.25rem;">🎯 Your Focus Areas</h3>
+                
+                <div class="alert-box success">
+                    <div class="alert-title">💪 Your Strengths</div>
+                    <div class="alert-desc">
+                        • <strong>Personalization (98)</strong> - Keep it up! You're the best on the team.<br>
+                        • <strong>Excitement Generation (96)</strong> - Excellent! Customers love your enthusiasm.<br>
+                        • <strong>Greeting (95)</strong> - Perfect first impressions every time!
+                    </div>
+                </div>
+                
+                <div class="alert-box warning">
+                    <div class="alert-title">📈 Improvement Opportunity</div>
+                    <div class="alert-desc">
+                        <strong>Flexibility Offered (78)</strong> - You're below team average (84)<br><br>
+                        💡 <strong>Tip:</strong> When customers ask for changes, try offering 2-3 alternatives instead of just one option.
+                        <div style="margin-top: 12px;">
+                            <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem; margin-right: 8px;">▶️ Watch Training (8 min)</button>
+                            <button class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.875rem;">View Example Calls</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <h3 style="margin: 30px 0 20px 0; font-size: 1.25rem;">📞 Recent Calls</h3>
+                
+                <div class="client-table">
+                    <div class="table-row" style="background: #F9FAFB; font-weight: 600; font-size: 0.875rem; color: #6B7280;">
+                        <div>Date/Time</div>
+                        <div>Call Type</div>
+                        <div>Score</div>
+                        <div>Feedback</div>
+                        <div>Actions</div>
+                    </div>
+                    <div class="table-row">
+                        <div>10:34 AM<br><span style="font-size: 0.75rem; color: #6B7280;">Today</span></div>
+                        <div>Flight Change<br><span style="font-size: 0.75rem; color: #6B7280;">4m 23s</span></div>
+                        <div><span class="score-badge score-good">95</span></div>
+                        <div style="color: #10B981; font-weight: 600;">✅ Great</div>
+                        <div><button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;">🔊 Listen</button></div>
+                    </div>
+                    <div class="table-row">
+                        <div>9:18 AM<br><span style="font-size: 0.75rem; color: #6B7280;">Today</span></div>
+                        <div>Cancellation<br><span style="font-size: 0.75rem; color: #6B7280;">6m 12s</span></div>
+                        <div><span class="score-badge score-good">88</span></div>
+                        <div style="color: #10B981; font-weight: 600;">✅ Good</div>
+                        <div><button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;">🔊 Listen</button></div>
+                    </div>
+                    <div class="table-row" style="background: #FEF3C7;">
+                        <div>5:42 PM<br><span style="font-size: 0.75rem; color: #6B7280;">Yesterday</span></div>
+                        <div>Baggage Issue<br><span style="font-size: 0.75rem; color: #6B7280;">8m 34s</span></div>
+                        <div><span class="score-badge score-warning">76</span></div>
+                        <div style="color: #F59E0B; font-weight: 600;">⚠️ Review</div>
+                        <div><button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;">🔊 Listen</button></div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 40px; text-align: center; padding: 40px; background: #F9FAFB; border-radius: 12px;">
+                    <h3 style="margin-bottom: 16px;">📈 Your 90-Day Trend</h3>
+                    <div style="background: white; padding: 30px; border-radius: 12px; border: 1px solid #E5E7EB; margin-bottom: 20px;">
+                        <div style="height: 200px; display: flex; align-items: flex-end; justify-content: space-around; gap: 20px;">
+                            <div style="flex: 1; background: linear-gradient(to top, #667eea, #764ba2); height: 60%; border-radius: 8px 8px 0 0; position: relative;">
+                                <div style="position: absolute; top: -25px; left: 50%; transform: translateX(-50%); font-weight: 600;">78</div>
+                                <div style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: 0.75rem; color: #6B7280;">Jan</div>
+                            </div>
+                            <div style="flex: 1; background: linear-gradient(to top, #667eea, #764ba2); height: 70%; border-radius: 8px 8px 0 0; position: relative;">
+                                <div style="position: absolute; top: -25px; left: 50%; transform: translateX(-50%); font-weight: 600;">82</div>
+                                <div style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: 0.75rem; color: #6B7280;">Feb</div>
+                            </div>
+                            <div style="flex: 1; background: linear-gradient(to top, #667eea, #764ba2); height: 80%; border-radius: 8px 8px 0 0; position: relative;">
+                                <div style="position: absolute; top: -25px; left: 50%; transform: translateX(-50%); font-weight: 600;">86</div>
+                                <div style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: 0.75rem; color: #6B7280;">Mar</div>
+                            </div>
+                            <div style="flex: 1; background: linear-gradient(to top, #667eea, #764ba2); height: 85%; border-radius: 8px 8px 0 0; position: relative;">
+                                <div style="position: absolute; top: -25px; left: 50%; transform: translateX(-50%); font-weight: 600;">89</div>
+                                <div style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: 0.75rem; color: #6B7280;">Apr</div>
+                            </div>
+                            <div style="flex: 1; background: linear-gradient(to top, #10B981, #059669); height: 95%; border-radius: 8px 8px 0 0; position: relative; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);">
+                                <div style="position: absolute; top: -25px; left: 50%; transform: translateX(-50%); font-weight: 600; color: #10B981;">92</div>
+                                <div style="position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: 0.75rem; color: #6B7280;">May</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="color: #10B981; font-weight: 600; font-size: 1.125rem; margin-top: 40px;">
+                        📊 You've improved +14 points since January! Keep up the great work! 🎉
+                    </div>
+                    
+                    <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 30px;">
+                        <button class="btn btn-secondary" onclick="goToScreen('dashboard-teamlead')">
+                            ← Back to Team Dashboard
+                        </button>
+                        <button class="btn btn-primary" onclick="goToScreen('dashboard-client')">
+                            View Client Report →
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard: Client Report View -->
+        <div class="screen dashboard" id="dashboard-client">
+            <div class="dashboard-header">
+                <div>
+                    <div class="dashboard-title">Quality Report - Delta Airlines</div>
+                    <div class="dashboard-subtitle">Service Provider: Teleperformance India | Report Period: May 2025</div>
+                </div>
+                <button class="btn btn-primary" style="padding: 10px 20px;">
+                    📄 Download PDF
+                </button>
+            </div>
+            
+            <div class="dashboard-content">
+                <div style="background: #EEF2FF; border: 2px solid #667eea; border-radius: 12px; padding: 24px; margin-bottom: 30px;">
+                    <h3 style="color: #667eea; margin-bottom: 16px;">📊 EXECUTIVE SUMMARY</h3>
+                    <div class="stats-grid" style="gap: 16px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.875rem; color: #374151; margin-bottom: 4px;">SLA Status</div>
+                            <div style="font-size: 2rem; font-weight: 700; color: #10B981;">98.2%</div>
+                            <div style="font-size: 0.75rem; color: #6B7280;">Target: 95%</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.875rem; color: #374151; margin-bottom: 4px;">Quality Score</div>
+                            <div style="font-size: 2rem; font-weight: 700; color: #667eea;">86.5</div>
+                            <div style="font-size: 0.75rem; color: #10B981;">↗️ +2.3 points</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.875rem; color: #374151; margin-bottom: 4px;">Compliance</div>
+                            <div style="font-size: 2rem; font-weight: 700; color: #10B981;">98%</div>
+                            <div style="font-size: 0.75rem; color: #6B7280;">Target: 95%</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.875rem; color: #374151; margin-bottom: 4px;">Calls Analyzed</div>
+                            <div style="font-size: 2rem; font-weight: 700; color: #374151;">2,847</div>
+                            <div style="font-size: 0.75rem; color: #6B7280;">100% QA coverage</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <h3 style="margin: 30px 0 20px 0; font-size: 1.25rem;">📈 Key Performance Indicators</h3>
+                
+                <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 24px; margin-bottom: 20px;">
+                    <div style="margin-bottom: 20px;">
+                        <strong style="color: #374151; display: block; margin-bottom: 12px;">Customer Experience Metrics:</strong>
+                        <div style="display: grid; gap: 12px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Empathy & Care</span>
+                                <span style="font-weight: 600; color: #10B981;">88% (Target: 85%) ✅</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Problem Resolution</span>
+                                <span style="font-weight: 600; color: #10B981;">92% (Target: 90%) ✅</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>First Call Resolution</span>
+                                <span style="font-weight: 600; color: #10B981;">87% (Target: 85%) ✅</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 20px; padding-top: 20px; border-top: 1px solid #E5E7EB;">
+                        <strong style="color: #374151; display: block; margin-bottom: 12px;">Delta-Specific Requirements:</strong>
+                        <div style="display: grid; gap: 12px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Brand Voice Adherence</span>
+                                <span style="font-weight: 600; color: #10B981;">94% ✅</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Personalization</span>
+                                <span style="font-weight: 600; color: #10B981;">91% ✅</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Flexibility Offered</span>
+                                <span style="font-weight: 600; color: #10B981;">89% ✅</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>EMI Offering Rate</span>
+                                <span style="font-weight: 600; color: #F59E0B;">68% (Target: 80%) ⚠️</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="padding-top: 20px; border-top: 1px solid #E5E7EB;">
+                        <strong style="color: #374151; display: block; margin-bottom: 12px;">Compliance & Policy:</strong>
+                        <div style="display: grid; gap: 12px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Data Privacy Adherence</span>
+                                <span style="font-weight: 600; color: #10B981;">99% ✅</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Proper Authentication</span>
+                                <span style="font-weight: 600; color: #10B981;">98% ✅</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Script Compliance</span>
+                                <span style="font-weight: 600; color: #10B981;">96% ✅</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <h3 style="margin: 30px 0 20px 0; font-size: 1.25rem;">📈 Improvements This Month</h3>
+                
+                <div class="alert-box success">
+                    <div class="alert-title">✅ Baggage Handling Scores Up 15%</div>
+                    <div class="alert-desc">
+                        Targeted coaching program implemented in March has shown excellent results. Customer satisfaction mentions related to baggage handling increased by 12%.
+                    </div>
+                </div>
+                
+                <div class="alert-box success">
+                    <div class="alert-title">✅ Average Call Resolution Time Down 8%</div>
+                    <div class="alert-desc">
+                        Better training on common issues has improved efficiency. Agents now resolve issues faster while maintaining quality standards.
+                    </div>
+                </div>
+                
+                <div class="alert-box success">
+                    <div class="alert-title">✅ Customer Satisfaction Mentions Up 12%</div>
+                    <div class="alert-desc">
+                        Improved personalization techniques are driving positive customer feedback. More customers explicitly mentioning satisfaction in calls.
+                    </div>
+                </div>
+                
+                <h3 style="margin: 30px 0 20px 0; font-size: 1.25rem;">🎯 Action Plan - Next Month</h3>
+                
+                <div class="alert-box warning">
+                    <div class="alert-title">Priority 1: Increase EMI Offering Rate</div>
+                    <div class="alert-desc">
+                        <strong>Current:</strong> 68% | <strong>Target:</strong> 80%<br>
+                        <strong>Action:</strong> Enhanced training module deployed for all agents<br>
+                        <strong>Timeline:</strong> 2 weeks<br>
+                        <strong>Expected Impact:</strong> +12% improvement in conversion rates
+                    </div>
+                </div>
+                
+                <div class="alert-box success">
+                    <div class="alert-title">Priority 2: Maintain Compliance Above 98%</div>
+                    <div class="alert-desc">
+                        <strong>Current Status:</strong> Exceeding targets consistently<br>
+                        <strong>Action:</strong> Ongoing daily monitoring and weekly compliance reviews<br>
+                        <strong>Review:</strong> Monthly compliance audit scheduled
+                    </div>
+                </div>
+                
+                <div style="margin-top: 40px; text-align: center; padding: 40px; background: #F9FAFB; border-radius: 12px;">
+                    <div style="color: #6B7280; font-size: 0.875rem; margin-bottom: 20px;">
+                        Report Generated: June 1, 2025 | Confidential
+                    </div>
+                    <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+                        <button class="btn btn-primary">📄 Download Full Report (PDF)</button>
+                        <button class="btn btn-secondary">📊 View Detailed Analytics</button>
+                        <button class="btn btn-secondary">📧 Schedule Review Meeting</button>
+                    </div>
+                    <div style="margin-top: 30px;">
+                        <button class="btn btn-secondary" onclick="goToScreen('dashboard-bpo')">
+                            ← Back to Operations Dashboard
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Demo Navigation Helper -->
+    <div class="demo-nav">
+        💡 Interactive Demo - Click buttons to navigate
+    </div>
+
+    <script>
+        let accountType = 'bpo';
+        
+        function selectAccountType(type) {
+            accountType = type;
+            document.querySelectorAll('.option-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.getElementById(type).parentElement.classList.add('selected');
+            document.getElementById(type).checked = true;
+        }
+        
+        function goToScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(screen => {
+                screen.classList.remove('active');
+            });
+            document.getElementById(screenId).classList.add('active');
+            window.scrollTo(0, 0);
+        }
+        
+        function addAnotherClient() {
+            alert('This would add another client card. In the real app, you can add unlimited clients!');
+        }
+        
+        function showImportOptions() {
+            alert('CSV Import: Upload a file with columns: Agent ID, Name, Email, Employee ID\n\nIn the real app, this opens a file picker.');
+        }
+        
+        function connectTelephony() {
+            alert('Connect Telephony System:\n\n✓ 3CX\n✓ Genesys Cloud\n✓ Five9\n✓ RingCentral\n✓ Avaya\n\nIn the real app, this guides you through API integration.');
+        }
+        
+        function addManually() {
+            alert('This would open a form to add an agent manually with fields:\n- Name\n- Email\n- Employee ID\n- Phone\n- Assigned Client/Process');
+        }
+        
+        // Auto-select BPO on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            selectAccountType('bpo');
+        });
+    </script>
+</body>
+</html>

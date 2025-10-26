@@ -45,6 +45,16 @@ def initialize_session_state():
         st.session_state.selected_engine = "Whisper"
     if "comparison_cache" not in st.session_state:
         st.session_state.comparison_cache = {}
+    
+    # Production demo session state
+    if "demo_screen" not in st.session_state:
+        st.session_state.demo_screen = "welcome"
+    if "demo_config" not in st.session_state:
+        st.session_state.demo_config = {}
+    if "demo_results" not in st.session_state:
+        st.session_state.demo_results = {}
+    if "demo_file" not in st.session_state:
+        st.session_state.demo_file = None
 
 initialize_session_state()
 
@@ -93,7 +103,13 @@ def page_call_analysis():
     with c3: metric_card("Files Analyzed", str(analyzed_files))
     st.markdown("---")
 
-    upload_tab, analyze_tab, export_tab, compare_tab = st.tabs(["Upload & Process", "Analyze Results", "Export CSV", "Compare Models"])
+    upload_tab, analyze_tab, export_tab, compare_tab, demo_tab = st.tabs([
+        "Upload & Process", 
+        "Analyze Results", 
+        "Export CSV", 
+        "Compare Models",
+        "🎯 Production Demo"
+    ])
 
     with upload_tab:
         st.subheader("1) Select Transcription Engine")
@@ -935,6 +951,598 @@ def page_call_analysis():
                     st.session_state.comparison_results = {}
                     st.success("Cache cleared!")
                     st.rerun()
+    
+    # =============================================================================
+    # PRODUCTION DEMO TAB
+    # =============================================================================
+    with demo_tab:
+        render_production_demo()
+
+# =============================================================================
+# PRODUCTION DEMO SCREENS
+# =============================================================================
+
+def render_production_demo():
+    """Main render function for production demo with multi-screen flow."""
+    
+    # Custom CSS for production demo styling
+    st.markdown("""
+    <style>
+    /* Gradient background for demo section */
+    .demo-container {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 16px;
+        padding: 40px;
+        color: white;
+        margin-bottom: 20px;
+    }
+    
+    /* Welcome screen styling */
+    .demo-title {
+        font-size: 3rem;
+        font-weight: 700;
+        text-align: center;
+        margin-bottom: 16px;
+        background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    
+    .demo-subtitle {
+        font-size: 1.5rem;
+        text-align: center;
+        opacity: 0.95;
+        margin-bottom: 32px;
+    }
+    
+    /* Feature cards */
+    .feature-card {
+        background: rgba(255, 255, 255, 0.15);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        padding: 24px;
+        margin: 12px 0;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    .feature-icon {
+        font-size: 2rem;
+        margin-bottom: 12px;
+    }
+    
+    .feature-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    
+    .feature-desc {
+        font-size: 1rem;
+        opacity: 0.9;
+    }
+    
+    /* Dashboard cards */
+    .dash-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        margin-bottom: 16px;
+    }
+    
+    .dash-card-title {
+        color: #374151;
+        font-size: 0.875rem;
+        font-weight: 600;
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    
+    .dash-card-value {
+        color: #111827;
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+    
+    .dash-card-trend {
+        color: #10B981;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+    
+    /* Score badges */
+    .score-badge-good {
+        background: #10B981;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+    
+    .score-badge-warning {
+        background: #F59E0B;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+    
+    /* Alert boxes */
+    .alert-success {
+        background: #D1FAE5;
+        border-left: 4px solid #10B981;
+        padding: 16px;
+        border-radius: 8px;
+        margin: 12px 0;
+    }
+    
+    .alert-warning {
+        background: #FEF3C7;
+        border-left: 4px solid #F59E0B;
+        padding: 16px;
+        border-radius: 8px;
+        margin: 12px 0;
+    }
+    
+    .alert-title {
+        font-weight: 600;
+        font-size: 1rem;
+        margin-bottom: 8px;
+        color: #111827;
+    }
+    
+    .alert-desc {
+        font-size: 0.875rem;
+        color: #374151;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Screen router
+    screen = st.session_state.demo_screen
+    
+    if screen == "welcome":
+        render_welcome_screen()
+    elif screen == "setup":
+        render_setup_screen()
+    elif screen == "processing":
+        render_processing_screen()
+    elif screen == "dashboard":
+        render_dashboard_screen()
+
+def render_welcome_screen():
+    """Welcome screen with branding and Get Started button."""
+    
+    st.markdown("""
+    <div class="demo-container">
+        <div class="demo-title">🎯 CallQA Pro</div>
+        <div class="demo-subtitle">AI-Powered Call Quality Analysis Platform</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Feature highlights in 3 columns
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-icon">🎙️</div>
+            <div class="feature-title">Advanced Transcription</div>
+            <div class="feature-desc">OpenAI Whisper with 99% accuracy across 50+ languages</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-icon">🤖</div>
+            <div class="feature-title">AI-Driven Analysis</div>
+            <div class="feature-desc">Claude Sonnet 4 provides comprehensive quality assessment</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-icon">📊</div>
+            <div class="feature-title">Actionable Insights</div>
+            <div class="feature-desc">Detailed scoring, sentiment analysis, and compliance tracking</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    
+    # Get Started button centered
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        if st.button("🚀 Get Started", use_container_width=True, type="primary"):
+            st.session_state.demo_screen = "setup"
+            st.rerun()
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Additional info
+    st.info("💡 **For Investors:** This production demo showcases our flagship configuration with best-in-class AI models for maximum accuracy and insight quality.")
+
+def render_setup_screen():
+    """Setup screen for client, agent info, and QA parameters."""
+    
+    # Header with back button
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("← Back"):
+            st.session_state.demo_screen = "welcome"
+            st.rerun()
+    with col2:
+        st.title("📝 Setup Configuration")
+    
+    st.markdown("---")
+    
+    # Client Selection
+    st.subheader("1️⃣ Select Client")
+    clients = [
+        "✈️ Delta Airlines - Customer Support",
+        "🛒 Amazon - Order Support",
+        "🏦 Providian Bank - Account Services",
+        "🏨 Expedia - Travel Booking",
+        "📱 T-Mobile - Technical Support"
+    ]
+    selected_client = st.selectbox("Client & Department", clients)
+    st.session_state.demo_config["client"] = selected_client
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Agent Information
+    st.subheader("2️⃣ Agent Information")
+    col1, col2 = st.columns(2)
+    with col1:
+        agent_name = st.text_input("Agent Name", value="John Doe", placeholder="Agent name")
+        st.session_state.demo_config["agent_name"] = agent_name
+    with col2:
+        agent_id = st.text_input("Agent ID", value="A1234", placeholder="Agent ID")
+        st.session_state.demo_config["agent_id"] = agent_id
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # QA Parameters
+    st.subheader("3️⃣ QA Parameters to Evaluate")
+    st.caption("Select the quality parameters to assess in this call:")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Standard Parameters:**")
+        greeting = st.checkbox("✅ Greeting & Opening", value=True)
+        empathy = st.checkbox("💝 Empathy & Active Listening", value=True)
+        problem_solving = st.checkbox("🔧 Problem Resolution", value=True)
+        closing = st.checkbox("👋 Closing & Next Steps", value=True)
+    
+    with col2:
+        st.markdown("**Advanced Parameters:**")
+        compliance = st.checkbox("📋 Compliance & Policy Adherence", value=True)
+        communication = st.checkbox("💬 Clear Communication", value=True)
+        professionalism = st.checkbox("👔 Professionalism", value=True)
+        upsell = st.checkbox("💰 Upsell Opportunities", value=False)
+    
+    # Store selected parameters
+    st.session_state.demo_config["parameters"] = {
+        "greeting": greeting,
+        "empathy": empathy,
+        "problem_solving": problem_solving,
+        "closing": closing,
+        "compliance": compliance,
+        "communication": communication,
+        "professionalism": professionalism,
+        "upsell": upsell
+    }
+    
+    st.markdown("---")
+    
+    # File Upload
+    st.subheader("4️⃣ Upload Call Recording")
+    uploaded_file = st.file_uploader(
+        "Upload audio file (WAV, MP3, M4A, etc.)",
+        type=stt_engines.SUPPORTED_FORMATS,
+        help="Upload the call recording to analyze"
+    )
+    
+    if uploaded_file:
+        st.session_state.demo_file = uploaded_file
+        st.success(f"✅ File uploaded: {uploaded_file.name}")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Process button
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("🎯 Analyze Call", use_container_width=True, type="primary"):
+                st.session_state.demo_screen = "processing"
+                st.rerun()
+    else:
+        st.info("📤 Please upload a call recording to proceed")
+
+def render_processing_screen():
+    """Processing screen with progress indicators."""
+    
+    st.title("⚙️ Processing Call Analysis")
+    st.markdown("---")
+    
+    # Check API keys
+    if not st.secrets.get("OPENAI_API_KEY"):
+        st.error("❌ OpenAI API key not configured. Whisper transcription requires OpenAI API access.")
+        if st.button("← Back to Setup"):
+            st.session_state.demo_screen = "setup"
+            st.rerun()
+        return
+    
+    if not st.secrets.get("CLAUDE_API_KEY"):
+        st.error("❌ Claude API key not configured. Analysis requires Anthropic API access.")
+        if st.button("← Back to Setup"):
+            st.session_state.demo_screen = "setup"
+            st.rerun()
+        return
+    
+    # Check if we have the file
+    if not st.session_state.demo_file:
+        st.error("No file uploaded. Please go back to setup.")
+        if st.button("← Back to Setup"):
+            st.session_state.demo_screen = "setup"
+            st.rerun()
+        return
+    
+    file = st.session_state.demo_file
+    
+    # Processing steps
+    st.info("🔄 **Step 1/2:** Transcribing audio with OpenAI Whisper...")
+    progress_bar_1 = st.progress(0)
+    
+    with st.spinner("Running Whisper transcription..."):
+        # Transcribe with Whisper
+        content = file.getvalue()
+        transcription_result = stt_engines.process_audio(file.name, content, "Whisper")
+        progress_bar_1.progress(100)
+    
+    if transcription_result.get("status") == "success":
+        st.success(f"✅ Transcription complete! Detected language: {transcription_result.get('language', 'unknown')}")
+        
+        # Extract transcript
+        english_text = transcription_result.get("english_text", "")
+        original_text = transcription_result.get("original_text", "")
+        
+        if english_text and english_text != "Not Available":
+            transcript = english_text
+        else:
+            transcript = original_text
+        
+        if not transcript or not transcript.strip():
+            st.error("❌ Transcription failed: Empty transcript")
+            if st.button("← Back to Setup"):
+                st.session_state.demo_screen = "setup"
+                st.rerun()
+            return
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.info("🔄 **Step 2/2:** Analyzing call quality with Claude Sonnet 4...")
+        progress_bar_2 = st.progress(0)
+        
+        with st.spinner("Running AI analysis..."):
+            # Analyze with Claude
+            analysis_result = ai_engine.run_comprehensive_analysis(
+                transcript=transcript,
+                depth="comprehensive",
+                custom_rubric=None,
+                model="Claude",
+                max_retries=2
+            )
+            progress_bar_2.progress(100)
+        
+        if analysis_result.get("error"):
+            st.error(f"❌ Analysis failed: {analysis_result.get('error')}")
+            if st.button("← Back to Setup"):
+                st.session_state.demo_screen = "setup"
+                st.rerun()
+            return
+        
+        # Store results
+        st.session_state.demo_results = {
+            "transcription": transcription_result,
+            "analysis": analysis_result,
+            "transcript": transcript
+        }
+        
+        st.success("✅ Analysis complete!")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Navigate to dashboard
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("📊 View Dashboard", use_container_width=True, type="primary"):
+                st.session_state.demo_screen = "dashboard"
+                st.rerun()
+    
+    else:
+        st.error(f"❌ Transcription failed: {transcription_result.get('error', 'Unknown error')}")
+        if st.button("← Back to Setup"):
+            st.session_state.demo_screen = "setup"
+            st.rerun()
+
+def render_dashboard_screen():
+    """Dashboard screen with results visualization."""
+    
+    # Header with back button
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("← Back"):
+            st.session_state.demo_screen = "setup"
+            st.rerun()
+    with col2:
+        st.title("📊 Call Quality Dashboard")
+    
+    st.markdown("---")
+    
+    # Get results
+    if not st.session_state.demo_results:
+        st.warning("No analysis results available. Please process a call first.")
+        return
+    
+    analysis = st.session_state.demo_results.get("analysis", {})
+    transcription = st.session_state.demo_results.get("transcription", {})
+    config = st.session_state.demo_config
+    
+    # Client info banner
+    st.markdown(f"""
+    <div class="demo-container">
+        <h3 style="margin: 0; font-size: 1.5rem;">
+            {config.get('client', 'Unknown Client')}
+        </h3>
+        <p style="margin: 8px 0 0 0; opacity: 0.9;">
+            Agent: {config.get('agent_name', 'Unknown')} ({config.get('agent_id', 'N/A')}) | 
+            Duration: {transcription.get('duration', 0):.1f}s | 
+            Language: {transcription.get('language', 'Unknown')}
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Stats Grid
+    overall = analysis.get("overall", {})
+    triage = analysis.get("triage", {})
+    business = analysis.get("business_outcome", {})
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        score = overall.get("overall_score", 0)
+        st.markdown(f"""
+        <div class="dash-card">
+            <div class="dash-card-title">Overall Score</div>
+            <div class="dash-card-value">{score}</div>
+            <div class="dash-card-trend">{"↗️ Above Average" if score >= 75 else "→ Needs Improvement"}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        quality = overall.get("quality_bucket", "Unknown")
+        st.markdown(f"""
+        <div class="dash-card">
+            <div class="dash-card-title">Quality Tier</div>
+            <div class="dash-card-value" style="font-size: 1.5rem;">{quality}</div>
+            <div class="dash-card-trend">Performance Rating</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        sentiment = triage.get("customer_sentiment", "Unknown")
+        sentiment_emoji = {"Positive": "😊", "Neutral": "😐", "Negative": "😞"}.get(sentiment, "")
+        st.markdown(f"""
+        <div class="dash-card">
+            <div class="dash-card-title">Customer Sentiment</div>
+            <div class="dash-card-value" style="font-size: 1.5rem;">{sentiment_emoji} {sentiment}</div>
+            <div class="dash-card-trend">Detected Emotion</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        outcome = business.get("business_outcome", "Unknown")
+        st.markdown(f"""
+        <div class="dash-card">
+            <div class="dash-card-title">Business Outcome</div>
+            <div class="dash-card-value" style="font-size: 1.5rem;">{outcome}</div>
+            <div class="dash-card-trend">Final Result</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Parameter Scores
+    st.subheader("📊 Quality Parameter Breakdown")
+    
+    parameters = overall.get("parameters_summary", [])
+    
+    if parameters:
+        for param in parameters:
+            param_name = param.get("name", "Unknown")
+            param_score = param.get("score", 0)
+            param_reasoning = param.get("reasoning", "No details provided")
+            
+            # Color code based on score
+            if param_score >= 80:
+                badge_class = "score-badge-good"
+            else:
+                badge_class = "score-badge-warning"
+            
+            st.markdown(f"""
+            <div class="dash-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <strong style="color: #111827; font-size: 1rem;">{param_name}</strong>
+                    <span class="{badge_class}">{param_score}</span>
+                </div>
+                <div style="color: #6B7280; font-size: 0.875rem;">{param_reasoning}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("No parameter scores available.")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Key Observations & Alerts
+    st.subheader("🚨 Key Observations")
+    
+    observations = overall.get("key_observations", [])
+    strengths = overall.get("strengths", [])
+    improvements = overall.get("areas_for_improvement", [])
+    
+    # Show strengths
+    if strengths:
+        st.markdown("""
+        <div class="alert-success">
+            <div class="alert-title">✅ Strengths Identified</div>
+            <div class="alert-desc">""" + "<br>".join([f"• {s}" for s in strengths[:3]]) + """</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Show improvements needed
+    if improvements:
+        st.markdown("""
+        <div class="alert-warning">
+            <div class="alert-title">⚠️ Areas for Improvement</div>
+            <div class="alert-desc">""" + "<br>".join([f"• {i}" for i in improvements[:3]]) + """</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Action Buttons
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("📄 View Full Transcript", use_container_width=True):
+            with st.expander("📝 Full Transcript", expanded=True):
+                st.text_area(
+                    "Transcript",
+                    st.session_state.demo_results.get("transcript", ""),
+                    height=300
+                )
+    
+    with col2:
+        if st.button("📊 Export Report", use_container_width=True):
+            st.info("💡 Report export functionality coming soon!")
+    
+    with col3:
+        if st.button("🔄 Analyze Another Call", use_container_width=True):
+            # Clear results and go back to setup
+            st.session_state.demo_results = {}
+            st.session_state.demo_file = None
+            st.session_state.demo_screen = "setup"
+            st.rerun()
 
 def page_rubric_editor():
     st.title("📝 Rubric Editor")
