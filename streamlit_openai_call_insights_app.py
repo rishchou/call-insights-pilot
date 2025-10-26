@@ -755,7 +755,13 @@ def page_compare_models():
                                 # Add all parameter scores to the result
                                 for param_name, param_data in param_scores.items():
                                     if isinstance(param_data, dict) and "error" not in param_data:
-                                        score = param_data.get("score", "N/A")
+                                        score = param_data.get("score", None)
+                                        # Ensure score is numeric or None
+                                        if score is not None:
+                                            try:
+                                                score = float(score)
+                                            except (ValueError, TypeError):
+                                                score = None
                                         result_dict[f"Param: {param_name}"] = score
                                 
                                 comparison_data.append(result_dict)
@@ -932,12 +938,22 @@ def page_compare_models():
                         # Create dataframe with just parameters for heatmap
                         param_df = success_df[['Model Combo'] + param_cols].set_index('Model Combo')
                         
+                        # Convert all parameter columns to numeric, replacing non-numeric with NaN
+                        for col in param_df.columns:
+                            param_df[col] = pd.to_numeric(param_df[col], errors='coerce')
+                        
                         # Rename columns to remove "Param: " prefix for cleaner display
                         param_df.columns = [col.replace("Param: ", "") for col in param_df.columns]
                         
+                        # Create a custom formatter that handles NaN values
+                        def format_score(val):
+                            if pd.isna(val):
+                                return "N/A"
+                            return f"{val:.1f}"
+                        
                         # Display as styled dataframe with gradient
                         st.dataframe(
-                            param_df.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=10).format("{:.1f}"),
+                            param_df.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=10, axis=None).format(format_score),
                             use_container_width=True
                         )
                     
