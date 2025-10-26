@@ -1036,15 +1036,18 @@ def page_compare_models():
                         # Create a combined identifier for each model combination
                         success_df['Model Combo'] = success_df['STT Engine'] + ' + ' + success_df['Analysis Model']
                         
-                        # Create dataframe with just parameters for heatmap
-                        param_df = success_df[['Model Combo'] + param_cols].set_index('Model Combo')
+                        # Create dataframe with metadata and parameters for heatmap
+                        param_df = success_df[['Model Combo', 'Branch', 'Call Direction'] + param_cols].set_index('Model Combo')
                         
-                        # Convert all parameter columns to numeric, replacing non-numeric with NaN
-                        for col in param_df.columns:
+                        # Convert parameter columns to numeric, replacing non-numeric with NaN
+                        # Keep Branch and Call Direction as-is
+                        param_only_cols = [col for col in param_df.columns if col not in ['Branch', 'Call Direction']]
+                        for col in param_only_cols:
                             param_df[col] = pd.to_numeric(param_df[col], errors='coerce')
                         
-                        # Rename columns to remove "Param: " prefix for cleaner display
-                        param_df.columns = [col.replace("Param: ", "") for col in param_df.columns]
+                        # Rename parameter columns to remove "Param: " prefix for cleaner display
+                        rename_dict = {col: col.replace("Param: ", "") for col in param_df.columns if col.startswith("Param: ")}
+                        param_df.rename(columns=rename_dict, inplace=True)
                         
                         # Create a custom formatter that handles NaN values
                         def format_score(val):
@@ -1052,17 +1055,22 @@ def page_compare_models():
                                 return "N/A"
                             return f"{val:.1f}"
                         
-                        # Display as styled dataframe with gradient
-                        st.dataframe(
-                            param_df.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=10, axis=None).format(format_score),
-                            use_container_width=True
-                        )
+                        # Display as styled dataframe with gradient only on parameter columns
+                        styled_df = param_df.style.background_gradient(
+                            cmap="RdYlGn", 
+                            vmin=0, 
+                            vmax=10, 
+                            axis=None,
+                            subset=[col for col in param_df.columns if col not in ['Branch', 'Call Direction']]
+                        ).format(format_score)
+                        
+                        st.dataframe(styled_df, use_container_width=True)
                     
                     with param_tab2:
                         st.markdown("**All Parameters - Detailed View**")
                         
-                        # Show all columns including parameters
-                        detail_cols = ["STT Engine", "Analysis Model", "Overall Score"] + param_cols
+                        # Show all columns including branch, call direction, and parameters
+                        detail_cols = ["STT Engine", "Analysis Model", "Branch", "Call Direction", "Overall Score"] + param_cols
                         detail_df = success_df[detail_cols].copy()
                         
                         # Rename parameter columns for cleaner display
