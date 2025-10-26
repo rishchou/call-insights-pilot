@@ -187,7 +187,7 @@ def page_call_analysis():
         with col1:
             selected_branch = st.selectbox(
                 "📍 Select Branch",
-                options=["India", "Nigeria", "Morocco", "Saudi Arabia", "Dubai"],
+                options=["India", "South Africa", "UAE", "Morocco", "Egypt", "Nigeria", "Ghana", "Kenya"],
                 index=0,
                 help="Choose the branch location for this call"
             )
@@ -643,7 +643,7 @@ def page_compare_models():
         with col1:
             comparison_branch = st.selectbox(
                 "📍 Select Branch",
-                options=["India", "Nigeria", "Morocco", "Saudi Arabia", "Dubai"],
+                options=["India", "South Africa", "UAE", "Morocco", "Egypt", "Nigeria", "Ghana", "Kenya"],
                 index=0,
                 key="comparison_branch",
                 help="Choose the branch location for this call"
@@ -1470,7 +1470,7 @@ def page_production_demo():
             with col1:
                 demo_branch = st.selectbox(
                     "📍 Select Branch",
-                    options=["India", "Nigeria", "Morocco", "Saudi Arabia", "Dubai"],
+                    options=["India", "South Africa", "UAE", "Morocco", "Egypt", "Nigeria", "Ghana", "Kenya"],
                     index=0,
                     key="demo_branch"
                 )
