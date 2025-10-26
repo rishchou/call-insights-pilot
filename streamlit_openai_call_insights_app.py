@@ -1049,10 +1049,13 @@ def page_compare_models():
                         rename_dict = {col: col.replace("Param: ", "") for col in param_df.columns if col.startswith("Param: ")}
                         param_df.rename(columns=rename_dict, inplace=True)
                         
-                        # Create a custom formatter that handles NaN values
+                        # Create a custom formatter that handles NaN values and strings
                         def format_score(val):
                             if pd.isna(val):
                                 return "N/A"
+                            # If it's a string or non-numeric, return as-is
+                            if isinstance(val, str) or not isinstance(val, (int, float)):
+                                return str(val)
                             return f"{val:.1f}"
                         
                         # Display as styled dataframe with gradient only on parameter columns
