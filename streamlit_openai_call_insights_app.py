@@ -1523,24 +1523,24 @@ def page_production_demo():
                     st.session_state.demo_screen = "setup"
                     st.rerun()
 
-# Remove the old function definitions below
-# (They will be ignored since code is now inline above)
-    """Main render function for production demo with multi-screen flow."""
-    
-    # Custom CSS for production demo styling
-    st.markdown("""
-    <style>
-    /* Gradient background for demo section */
-    .demo-container {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 16px;
-        padding: 40px;
-        color: white;
-        margin-bottom: 20px;
-    }
-    
-    /* Welcome screen styling */
-    .demo-title {
+def page_rubric_editor():
+    st.title("📝 Rubric Editor")
+    st.info("Functionality to edit rubrics coming soon.")
+
+def page_run_history():
+    st.title("🗂️ Run History")
+    st.info("Functionality to view past analysis runs coming soon.")
+
+# =============================================================================
+# ROUTER
+# =============================================================================
+
+def main():
+    # Sidebar
+    with st.sidebar:
+        st.title("⚙️ Settings")
+        
+        st.markdown("### 📑 Navigation")
         font-size: 3rem;
         font-weight: 700;
         text-align: center;
