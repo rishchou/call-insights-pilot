@@ -55,6 +55,10 @@ def initialize_session_state():
         st.session_state.demo_results = {}
     if "demo_file" not in st.session_state:
         st.session_state.demo_file = None
+    
+    # Page navigation
+    if "current_page" not in st.session_state:
+        st.session_state.current_page = "Call Analysis"
 
 initialize_session_state()
 
@@ -103,12 +107,10 @@ def page_call_analysis():
     with c3: metric_card("Files Analyzed", str(analyzed_files))
     st.markdown("---")
 
-    upload_tab, analyze_tab, export_tab, compare_tab, demo_tab = st.tabs([
+    upload_tab, analyze_tab, export_tab = st.tabs([
         "Upload & Process", 
         "Analyze Results", 
-        "Export CSV", 
-        "Compare Models",
-        "🎯 Production Demo"
+        "Export CSV"
     ])
 
     with upload_tab:
@@ -566,10 +568,7 @@ def page_call_analysis():
         st.markdown("---")
         st.info("💡 **Tip**: Use the detailed CSV for in-depth analysis in Excel or other tools.")
 
-    # ---------------------------------------------------------------------------------
-    # TAB 4: COMPARE MODELS
-    # ---------------------------------------------------------------------------------
-    with compare_tab:
+def page_compare_models():
         st.subheader("🔬 Model Comparison Matrix")
         st.caption("Compare all combinations of transcription engines and analysis models")
         
@@ -951,11 +950,8 @@ def page_call_analysis():
                     st.session_state.comparison_results = {}
                     st.success("Cache cleared!")
                     st.rerun()
-    
-    # =============================================================================
-    # PRODUCTION DEMO TAB
-    # =============================================================================
-    with demo_tab:
+
+def page_production_demo():
         # Custom CSS for production demo styling
         st.markdown("""
         <style>
@@ -2127,6 +2123,21 @@ def main():
     with st.sidebar:
         st.title("⚙️ Settings")
         
+        st.markdown("### 📑 Navigation")
+        page_options = ["Call Analysis", "🔬 Compare Models", "🎯 Production Demo"]
+        selected_page = st.radio(
+            "Select Page:",
+            page_options,
+            index=page_options.index(st.session_state.current_page),
+            label_visibility="collapsed"
+        )
+        
+        if selected_page != st.session_state.current_page:
+            st.session_state.current_page = selected_page
+            st.rerun()
+        
+        st.markdown("---")
+        
         # Show available engines
         available_engines = stt_engines.get_available_engines()
         st.info(f"**Available Engines:** {', '.join(available_engines) if available_engines else 'None'}")
@@ -2143,6 +2154,8 @@ def main():
             st.success("✅ Deepgram")
         if st.secrets.get("ASSEMBLYAI_API_KEY"):
             st.success("✅ AssemblyAI")
+        if st.secrets.get("CLAUDE_API_KEY"):
+            st.success("✅ Claude")
         
         st.markdown("---")
         
@@ -2160,8 +2173,13 @@ def main():
             st.session_state.analysis_results.clear()
             st.rerun()
     
-    # Main content
-    page_call_analysis()
+    # Main content - route to the selected page
+    if st.session_state.current_page == "Call Analysis":
+        page_call_analysis()
+    elif st.session_state.current_page == "🔬 Compare Models":
+        page_compare_models()
+    elif st.session_state.current_page == "🎯 Production Demo":
+        page_production_demo()
 
 
 if __name__ == "__main__":
