@@ -372,6 +372,20 @@ def page_call_analysis():
             )
             custom_rubric = None if custom_rubric == "None" else custom_rubric
         
+        # Quality bucket reference
+        with st.expander("📊 Quality Scoring Guide", expanded=False):
+            st.markdown("""
+            **Quality Buckets** (based on Overall Score 0-100):
+            
+            - 🟢 **Excellent**: 90-100 - Outstanding performance across all parameters
+            - 🟢 **Good**: 80-89 - Strong performance with minor improvement areas
+            - 🟡 **Average**: 70-79 - Acceptable performance, coaching recommended
+            - 🟠 **Below Average**: 60-69 - Notable gaps, immediate coaching needed
+            - 🔴 **Poor**: <60 - Significant deficiencies, urgent intervention required
+            
+            The overall score is a weighted average of all parameter scores (0-10 scale).
+            """)
+        
         st.markdown("---")
         
         # Run Analysis button
@@ -683,6 +697,18 @@ def page_compare_models():
                 index=0
             )
             custom_rubric = None if custom_rubric == "None" else custom_rubric
+        
+        # Quality bucket reference
+        with st.expander("📊 Quality Scoring Guide", expanded=False):
+            st.markdown("""
+            **Quality Buckets** (based on Overall Score 0-100):
+            
+            - 🟢 **Excellent**: 90-100 - Outstanding performance
+            - 🟢 **Good**: 80-89 - Strong performance
+            - 🟡 **Average**: 70-79 - Acceptable performance
+            - 🟠 **Below Average**: 60-69 - Notable gaps
+            - 🔴 **Poor**: <60 - Significant deficiencies
+            """)
         
         st.markdown("---")
         
