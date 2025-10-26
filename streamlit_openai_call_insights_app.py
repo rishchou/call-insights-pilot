@@ -1541,11 +1541,26 @@ def main():
         st.title("⚙️ Settings")
         
         st.markdown("### 📑 Navigation")
-        font-size: 3rem;
-        font-weight: 700;
-        text-align: center;
-        margin-bottom: 16px;
-        background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
+        page_options = ["Call Analysis", "🔬 Compare Models", "🎯 Production Demo"]
+        selected_page = st.radio(
+            "Select Page:",
+            page_options,
+            index=page_options.index(st.session_state.current_page),
+            label_visibility="collapsed"
+        )
+        
+        if selected_page != st.session_state.current_page:
+            st.session_state.current_page = selected_page
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # Show available engines
+        available_engines = stt_engines.get_available_engines()
+        st.info(f"**Available Engines:** {', '.join(available_engines) if available_engines else 'None'}")
+        
+        # API key status
+        st.markdown("### 🔑 API Keys Status")
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
