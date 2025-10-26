@@ -1561,8 +1561,46 @@ def main():
         
         # API key status
         st.markdown("### 🔑 API Keys Status")
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        if st.secrets.get("OPENAI_API_KEY"):
+            st.success("✅ OpenAI (Whisper)")
+        if st.secrets.get("GEMINI_API_KEY"):
+            st.success("✅ Gemini (Analysis & Diarization)")
+        if st.secrets.get("GLADIA_API_KEY"):
+            st.success("✅ Gladia")
+        if st.secrets.get("DEEPGRAM_API_KEY"):
+            st.success("✅ Deepgram")
+        if st.secrets.get("ASSEMBLYAI_API_KEY"):
+            st.success("✅ AssemblyAI")
+        if st.secrets.get("CLAUDE_API_KEY"):
+            st.success("✅ Claude")
+        
+        st.markdown("---")
+        
+        # Stats
+        st.markdown("### 📊 Session Stats")
+        st.metric("Files Uploaded", len(st.session_state.files_metadata))
+        st.metric("Files Processed", len(st.session_state.transcription_results))
+        st.metric("Files Analyzed", len(st.session_state.analysis_results))
+        
+        st.markdown("---")
+        
+        if st.button("🗑️ Clear All Data"):
+            st.session_state.files_metadata.clear()
+            st.session_state.transcription_results.clear()
+            st.session_state.analysis_results.clear()
+            st.rerun()
+    
+    # Main content - route to the selected page
+    if st.session_state.current_page == "Call Analysis":
+        page_call_analysis()
+    elif st.session_state.current_page == "🔬 Compare Models":
+        page_compare_models()
+    elif st.session_state.current_page == "🎯 Production Demo":
+        page_production_demo()
+
+
+if __name__ == "__main__":
+    main()
     }
     
     .demo-subtitle {
