@@ -752,7 +752,7 @@ def page_compare_models():
                                     "Low Performers": overall.get("parameters_needing_attention", 0)
                                 }
                                 
-                                # Add all parameter scores to the result
+                                # Add all parameter scores and details to the result
                                 for param_name, param_data in param_scores.items():
                                     if isinstance(param_data, dict) and "error" not in param_data:
                                         score = param_data.get("score", None)
@@ -763,6 +763,18 @@ def page_compare_models():
                                             except (ValueError, TypeError):
                                                 score = None
                                         result_dict[f"Param: {param_name}"] = score
+                                        
+                                        # Add coaching opportunity
+                                        coaching = param_data.get("coaching_opportunity", "")
+                                        result_dict[f"Coaching: {param_name}"] = coaching if coaching else None
+                                        
+                                        # Add confidence
+                                        confidence = param_data.get("confidence", None)
+                                        result_dict[f"Confidence: {param_name}"] = confidence
+                                        
+                                        # Add severity (if exists)
+                                        severity = param_data.get("severity", None)
+                                        result_dict[f"Severity: {param_name}"] = severity
                                 
                                 comparison_data.append(result_dict)
                         
@@ -857,18 +869,6 @@ def page_compare_models():
                     use_container_width=True
                 )
                 
-                # Quality bucket distribution
-                st.markdown("#### 📈 Quality Distribution")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    quality_counts = success_df.groupby(["Analysis Model", "Quality"]).size().unstack(fill_value=0)
-                    st.bar_chart(quality_counts)
-                
-                with col2:
-                    stt_quality = success_df.groupby(["STT Engine", "Quality"]).size().unstack(fill_value=0)
-                    st.bar_chart(stt_quality)
-                
                 # Detailed comparison table
                 st.markdown("#### 📋 Detailed Results")
                 display_cols = ["STT Engine", "Analysis Model", "Overall Score", "Quality", 
@@ -926,8 +926,13 @@ def page_compare_models():
                 param_cols = [col for col in success_df.columns if col.startswith("Param: ")]
                 
                 if param_cols:
+                    # Get coaching, confidence, and severity columns
+                    coaching_cols = [col for col in success_df.columns if col.startswith("Coaching: ")]
+                    confidence_cols = [col for col in success_df.columns if col.startswith("Confidence: ")]
+                    severity_cols = [col for col in success_df.columns if col.startswith("Severity: ")]
+                    
                     # Create tabs for different views
-                    param_tab1, param_tab2, param_tab3 = st.tabs(["📈 Heatmap View", "📋 Detailed Table", "📊 Statistics"])
+                    param_tab1, param_tab2, param_tab3, param_tab4 = st.tabs(["📈 Heatmap View", "📋 Detailed Table", "📊 Statistics", "💡 Coaching & Details"])
                     
                     with param_tab1:
                         st.markdown("**Parameter Scores Heatmap** (rows: STT+LLM, columns: parameters)")
@@ -1021,6 +1026,52 @@ def page_compare_models():
                             bottom_params = stats_df.tail(5)
                             for _, row in bottom_params.iterrows():
                                 st.write(f"• **{row['Parameter']}**: {row['Average Score']:.2f}/10")
+                    
+                    with param_tab4:
+                        st.markdown("**Coaching Opportunities & Additional Details**")
+                        st.caption("Confidence, severity, and improvement suggestions for each parameter across all combinations")
+                        
+                        # Create comprehensive detail view
+                        detail_cols_full = ["STT Engine", "Analysis Model", "Overall Score"]
+                        
+                        # Build a detailed dataframe with parameters and their metadata
+                        for i, param_col in enumerate(param_cols):
+                            param_name = param_col.replace("Param: ", "")
+                            detail_cols_full.append(param_col)
+                            
+                            # Add corresponding coaching column if exists
+                            coaching_col = f"Coaching: {param_name}"
+                            if coaching_col in coaching_cols:
+                                detail_cols_full.append(coaching_col)
+                            
+                            # Add confidence column if exists
+                            confidence_col = f"Confidence: {param_name}"
+                            if confidence_col in confidence_cols:
+                                detail_cols_full.append(confidence_col)
+                            
+                            # Add severity column if exists
+                            severity_col = f"Severity: {param_name}"
+                            if severity_col in severity_cols:
+                                detail_cols_full.append(severity_col)
+                        
+                        # Filter to only columns that exist
+                        existing_cols = [col for col in detail_cols_full if col in success_df.columns]
+                        detail_full_df = success_df[existing_cols].copy()
+                        
+                        # Rename columns for cleaner display
+                        rename_dict = {
+                            col: col.replace("Param: ", "Score: ").replace("Coaching: ", "💡 ").replace("Confidence: ", "🎯 Conf: ").replace("Severity: ", "⚠️ Sev: ")
+                            for col in detail_full_df.columns
+                        }
+                        detail_full_df.rename(columns=rename_dict, inplace=True)
+                        
+                        st.dataframe(
+                            detail_full_df.sort_values("Overall Score", ascending=False),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        st.info("💡 **Tip**: This table shows all parameters with their scores, coaching suggestions, confidence levels, and severity ratings for each model combination.")
                 else:
                     st.info("No parameter scores found in the analysis results.")
             
